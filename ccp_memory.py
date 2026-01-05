@@ -97,6 +97,46 @@ class ReferenceScreenshot:
 
 
 @dataclass
+class Task:
+    """A task broken down from the main user request."""
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    description: str = ""
+    assignee: str = "claude"  # claude, ccp, human
+    status: str = "pending"  # pending, in_progress, blocked, completed, cancelled
+    priority: int = 0  # 0 = highest priority
+    parent_id: Optional[str] = None  # For subtasks
+    blockers: List[str] = field(default_factory=list)  # Task IDs blocking this
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    completed_at: Optional[str] = None
+    notes: str = ""
+    
+    def start(self) -> None:
+        """Mark task as in progress."""
+        self.status = "in_progress"
+        self.updated_at = datetime.now().isoformat()
+    
+    def complete(self) -> None:
+        """Mark task as completed."""
+        self.status = "completed"
+        self.completed_at = datetime.now().isoformat()
+        self.updated_at = self.completed_at
+    
+    def block(self, reason: str = "") -> None:
+        """Mark task as blocked."""
+        self.status = "blocked"
+        self.notes = reason
+        self.updated_at = datetime.now().isoformat()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Task":
+        return cls(**data)
+
+
+@dataclass
 class SessionContext:
     """
     Tier 2: High-level context persisting across hours/days.
@@ -116,6 +156,7 @@ class SessionContext:
     project_files: Dict[str, str] = field(default_factory=dict)  # filename -> summary
     technical_debt: List[DebtItem] = field(default_factory=list)
     reference_screenshots: List[ReferenceScreenshot] = field(default_factory=list)
+    tasks: List[Task] = field(default_factory=list)  # Task breakdown
     working_dir: str = "."
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_active: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -169,6 +210,70 @@ class SessionContext:
         self.task_count += 1
         self.touch()
     
+    # === Task Management ===
+    
+    def add_task(self, description: str, assignee: str = "claude", priority: int = 0, parent_id: str = None) -> Task:
+        """Add a new task."""
+        task = Task(
+            description=description,
+            assignee=assignee,
+            priority=priority,
+            parent_id=parent_id,
+        )
+        self.tasks.append(task)
+        self.touch()
+        return task
+    
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Get task by ID."""
+        for task in self.tasks:
+            if task.id == task_id:
+                return task
+        return None
+    
+    def update_task_status(self, task_id: str, status: str, notes: str = "") -> bool:
+        """Update task status."""
+        task = self.get_task(task_id)
+        if not task:
+            return False
+        task.status = status
+        task.updated_at = datetime.now().isoformat()
+        if status == "completed":
+            task.completed_at = task.updated_at
+        if notes:
+            task.notes = notes
+        self.touch()
+        return True
+    
+    def get_pending_tasks(self) -> List[Task]:
+        """Get all pending/in_progress tasks sorted by priority."""
+        return sorted(
+            [t for t in self.tasks if t.status in ("pending", "in_progress")],
+            key=lambda t: t.priority
+        )
+    
+    def get_next_task(self) -> Optional[Task]:
+        """Get the highest priority pending task."""
+        pending = self.get_pending_tasks()
+        return pending[0] if pending else None
+    
+    def get_tasks_summary(self) -> str:
+        """Get a summary of all tasks for LLM context."""
+        if not self.tasks:
+            return "No tasks defined yet."
+        
+        lines = ["TASKS:"]
+        for t in self.tasks:
+            status_icon = {"pending": "⏳", "in_progress": "🔄", "blocked": "🚫", "completed": "✅", "cancelled": "❌"}.get(t.status, "•")
+            lines.append(f"  {status_icon} [{t.id}] {t.description} ({t.status}, assignee: {t.assignee})")
+        
+        pending = len([t for t in self.tasks if t.status == "pending"])
+        in_progress = len([t for t in self.tasks if t.status == "in_progress"])
+        completed = len([t for t in self.tasks if t.status == "completed"])
+        lines.append(f"  Summary: {completed} done, {in_progress} in progress, {pending} pending")
+        
+        return "\n".join(lines)
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         data = asdict(self)
@@ -176,6 +281,8 @@ class SessionContext:
         data["technical_debt"] = [asdict(d) for d in self.technical_debt]
         # Convert ReferenceScreenshot list to dicts
         data["reference_screenshots"] = [asdict(s) for s in self.reference_screenshots]
+        # Convert Task list to dicts
+        data["tasks"] = [t.to_dict() for t in self.tasks]
         return data
     
     @classmethod
@@ -187,6 +294,9 @@ class SessionContext:
         # Convert screenshot dicts back to ReferenceScreenshot
         screenshot_list = [ReferenceScreenshot(**s) for s in data.get("reference_screenshots", [])]
         data["reference_screenshots"] = screenshot_list
+        # Convert task dicts back to Task
+        task_list = [Task.from_dict(t) for t in data.get("tasks", [])]
+        data["tasks"] = task_list
         return cls(**data)
     
     def save(self, sessions_dir: Path) -> None:
@@ -229,6 +339,9 @@ class SessionContext:
         if self.technical_debt:
             debt_summary = "; ".join(d.description for d in self.technical_debt[-3:])
             lines.append(f"TRACKED DEBT: {debt_summary}")
+        
+        if self.tasks:
+            lines.append(self.get_tasks_summary())
         
         return "\n".join(lines)
 

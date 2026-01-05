@@ -1,5 +1,9 @@
 # Interactive Labs - Claude Code Process Controller
-# No external dependencies required - uses only Python stdlib
-#
+
+# Web server dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+
 # Optional dependencies for enhanced features:
 # pexpect>=4.8.0     # Alternative PTY handling (cross-platform)

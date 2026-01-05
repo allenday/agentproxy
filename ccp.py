@@ -71,6 +71,9 @@ class FunctionName(str, Enum):
     CHECK_SERVER = "check_server"
     READ_FILE = "read_file"
     MARK_DONE = "mark_done"
+    CREATE_TASK = "create_task"
+    UPDATE_TASK = "update_task"
+    COMPLETE_TASK = "complete_task"
 
 
 @dataclass
@@ -324,6 +327,70 @@ FUNCTION_DECLARATIONS: List[FunctionDeclaration] = [
             "required": ["summary"]
         }
     ),
+    FunctionDeclaration(
+        name=FunctionName.CREATE_TASK,
+        description="Break down work into a subtask and add it to the task list.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What needs to be done"
+                },
+                "assignee": {
+                    "type": "string",
+                    "enum": ["claude", "ccp"],
+                    "description": "Who should do this task"
+                },
+                "priority": {
+                    "type": "integer",
+                    "description": "Priority (0=highest)"
+                }
+            },
+            "required": ["description"]
+        }
+    ),
+    FunctionDeclaration(
+        name=FunctionName.UPDATE_TASK,
+        description="Update a task's status (in_progress, blocked, etc).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID to update"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "blocked", "completed", "cancelled"],
+                    "description": "New status"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional notes about the update"
+                }
+            },
+            "required": ["task_id", "status"]
+        }
+    ),
+    FunctionDeclaration(
+        name=FunctionName.COMPLETE_TASK,
+        description="Mark a specific task as completed.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID to mark complete"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Completion notes"
+                }
+            },
+            "required": ["task_id"]
+        }
+    ),
 ]
 
 
@@ -338,9 +405,10 @@ class FunctionExecutor:
     Each function runs independently and returns a FunctionResult.
     """
     
-    def __init__(self, working_dir: str = ".") -> None:
+    def __init__(self, working_dir: str = ".", memory: Any = None) -> None:
         self.working_dir = working_dir
         self._claude_queue: Queue = Queue()
+        self._memory = memory  # Reference to CCPMemory for task management
     
     def execute(self, call: FunctionCall) -> FunctionResult:
         """
@@ -359,6 +427,9 @@ class FunctionExecutor:
             FunctionName.CHECK_SERVER: self._check_server,
             FunctionName.READ_FILE: self._read_file,
             FunctionName.MARK_DONE: self._mark_done,
+            FunctionName.CREATE_TASK: self._create_task,
+            FunctionName.UPDATE_TASK: self._update_task,
+            FunctionName.COMPLETE_TASK: self._complete_task,
         }
         
         handler = handlers.get(call.name)
@@ -564,6 +635,90 @@ class FunctionExecutor:
             }
         )
     
+    def _create_task(self, args: Dict[str, Any]) -> FunctionResult:
+        """Create a new task in the task list."""
+        if not self._memory:
+            return FunctionResult(
+                name=FunctionName.CREATE_TASK,
+                success=False,
+                output="No memory reference - cannot create task"
+            )
+        
+        description = args.get("description", "")
+        assignee = args.get("assignee", "claude")
+        priority = args.get("priority", 0)
+        
+        task = self._memory.session.add_task(
+            description=description,
+            assignee=assignee,
+            priority=priority
+        )
+        self._memory.save_session()
+        
+        return FunctionResult(
+            name=FunctionName.CREATE_TASK,
+            success=True,
+            output=f"Created task [{task.id}]: {description}",
+            metadata={"task_id": task.id, "task": task.to_dict()}
+        )
+    
+    def _update_task(self, args: Dict[str, Any]) -> FunctionResult:
+        """Update a task's status."""
+        if not self._memory:
+            return FunctionResult(
+                name=FunctionName.UPDATE_TASK,
+                success=False,
+                output="No memory reference - cannot update task"
+            )
+        
+        task_id = args.get("task_id", "")
+        status = args.get("status", "")
+        notes = args.get("notes", "")
+        
+        success = self._memory.session.update_task_status(task_id, status, notes)
+        if success:
+            self._memory.save_session()
+            return FunctionResult(
+                name=FunctionName.UPDATE_TASK,
+                success=True,
+                output=f"Task [{task_id}] updated to: {status}",
+                metadata={"task_id": task_id, "status": status}
+            )
+        else:
+            return FunctionResult(
+                name=FunctionName.UPDATE_TASK,
+                success=False,
+                output=f"Task [{task_id}] not found"
+            )
+    
+    def _complete_task(self, args: Dict[str, Any]) -> FunctionResult:
+        """Mark a task as completed."""
+        if not self._memory:
+            return FunctionResult(
+                name=FunctionName.COMPLETE_TASK,
+                success=False,
+                output="No memory reference - cannot complete task"
+            )
+        
+        task_id = args.get("task_id", "")
+        notes = args.get("notes", "")
+        
+        success = self._memory.session.update_task_status(task_id, "completed", notes)
+        if success:
+            self._memory.save_session()
+            return FunctionResult(
+                name=FunctionName.COMPLETE_TASK,
+                success=True,
+                output=f"Task [{task_id}] completed",
+                metadata={"task_id": task_id}
+            )
+        else:
+            return FunctionResult(
+                name=FunctionName.COMPLETE_TASK,
+                success=False,
+                output=f"Task [{task_id}] not found"
+            )
+    
     def get_pending_claude_instruction(self) -> Optional[Dict[str, Any]]:
         """Get next queued instruction for Claude, if any."""
         try:
@@ -642,6 +797,14 @@ You must output:
 - If Claude asks questions, answer them based on the mission/task context
 - If Claude needs permissions, approve them (permissions are auto-granted)
 - Keep pushing Claude until the task is ACTUALLY DONE and VERIFIED
+
+## TASK MANAGEMENT
+- At the START of a new task, break it down into subtasks using CREATE_TASK
+- Each subtask should be small, specific, and assignable to Claude
+- Track progress by updating task status (UPDATE_TASK) as work progresses
+- Mark tasks complete (COMPLETE_TASK) when verified done
+- Use the task list to decide what to assign Claude next
+- Refer to pending tasks when deciding next actions
 """
 
     def __init__(
@@ -663,8 +826,8 @@ You must output:
         
         # Initialize components
         self._gemini = self._init_gemini()
-        self._executor = FunctionExecutor(working_dir)
         self._memory = self._init_memory(session_id, user_mission)
+        self._executor = FunctionExecutor(working_dir, memory=self._memory)
         self._display = create_display("rich")
         
         # State

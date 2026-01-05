@@ -219,19 +219,16 @@ Examples:
             print(f"Session: {self.ccp.session_id}")
             print()
             
-            # Color legend
-            print("┌───────────────────────────────────────────────────────────┐")
-            print("│ \033[1mCOLOR LEGEND\033[0m                                              │")
-            print("├───────────────────────────────────────────────────────────┤")
-            print("│ Claude subprocess    \033[35m┃ Claude ┃ magenta border\033[0m          │")
-            print("│ CCP orchestrator     \033[36m│ CCP    │ cyan border\033[0m             │")
-            print("├───────────────────────────────────────────────────────────┤")
-            print("│ Tool calls           \033[93m■ yellow text\033[0m                      │")
-            print("│ Tool results         \033[95m■ magenta text\033[0m                     │")
-            print("│ Thinking/reasoning   \033[96m■ cyan text\033[0m                        │")
-            print("│ Completed/success    \033[92m■ green text\033[0m                       │")
-            print("│ Errors               \033[91m■ red text\033[0m                         │")
-            print("└───────────────────────────────────────────────────────────┘")
+            # Color legend - each line shown in its actual color
+            print("\033[1m COLOR LEGEND \033[0m")
+            print("\033[35m┃ Claude ┃ Claude subprocess output\033[0m")
+            print("\033[36m│ CCP    │ CCP orchestration & reasoning\033[0m")
+            print("\033[93m■ Tool calls - function invocations\033[0m")
+            print("\033[95m■ Tool results - execution output\033[0m")
+            print("\033[96m■ CCP thinking - analysis & decisions\033[0m")
+            print("\033[94m■ CCP tasks - task breakdown & tracking\033[0m")
+            print("\033[92m■ Completed - success messages\033[0m")
+            print("\033[91m■ Errors - failures & issues\033[0m")
             print()
             
             exit_code = 0
