@@ -47,9 +47,11 @@ python cli.py --add-screenshot design.png "Match this UI"
 ```
 
 ```bash
-alias ccp='/Users/ethw/Desktop/GIT-Aertoria/agentproxy/cli.py'
+# Add alias to ~/.zshrc or ~/.bashrc
+alias ccp='python /path/to/agentproxy/cli.py'
 
-ccp --add-screenshot /Users/ethw/Desktop/cc.jpg "Build a webapplication Match exactly this UI to pixle-perfect, at the same time, add more buttons and features for user management"
+# Example with screenshot
+ccp --add-screenshot design.png "Build a web app matching this UI"
 ```
 
 ## Mode 2: Server
