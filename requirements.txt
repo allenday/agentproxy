@@ -1,5 +1,8 @@
 # Interactive Labs - Claude Code Process Controller
 
+# Environment
+python-dotenv>=1.0.0
+
 # Web server dependencies
 fastapi>=0.104.0
 uvicorn>=0.24.0

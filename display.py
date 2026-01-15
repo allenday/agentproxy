@@ -66,11 +66,12 @@ class RealtimeDisplay:
         Claude  (MAGENTA)  ┃ Claude ┃  Claude Code subprocess (execution)
     """
     
-    # Source-to-prefix mapping - PA, PA-thinking, PA-NextStep, and Claude
+    # Source-to-prefix mapping - PA, PA-thinking, PA-NextStep, PA->Claude, and Claude
     SOURCE_PREFIXES = {
         "pa":          (Colors.CYAN,    "│ PA          │"),
-        "pa-thinking": (Colors.BLUE,    "│ PA-thinking │"),
+        "pa-thinking": (Colors.BLUE,    "│ 💭 THINKING │"),
         "pa-nextstep": (Colors.BRIGHT_YELLOW + Colors.BOLD, "│ PA-nextstep │"),
+        "pa-to-claude": (Colors.GREEN + Colors.BOLD, "│ ➜ TO CLAUDE │"),
         "claude":      (Colors.MAGENTA, "┃ Claude      ┃"),
     }
     

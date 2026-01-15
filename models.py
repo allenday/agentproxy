@@ -1,6 +1,6 @@
 """
-Data Models for Claude Code Process Controller
-==============================================
+Data Models for PA (Proxy Agent)
+=================================
 
 Defines all data structures used throughout the system.
 Optimized for clarity and type safety.
@@ -10,6 +10,49 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from typing import Optional, Dict, Any, List
+
+
+# =============================================================================
+# PA Reasoning Structures
+# =============================================================================
+
+@dataclass
+class PAReasoning:
+    """
+    PA's reasoning output for a single loop iteration.
+    
+    Attributes:
+        current_state: Understanding of where we are in the task.
+        claude_progress: Assessment of Claude's progress.
+        insights: Project-level insights and observations.
+        decision: What action to take and why.
+    """
+    current_state: str
+    claude_progress: str
+    insights: str
+    decision: str
+
+
+# =============================================================================
+# Agent Loop I/O Structures
+# =============================================================================
+
+@dataclass
+class AgentLoopOutput:
+    """
+    Output from a single PA agent loop iteration.
+    
+    Attributes:
+        reasoning: PA's reasoning for this iteration.
+        function_call: The function PA decided to execute.
+    """
+    reasoning: PAReasoning
+    function_call: Any  # FunctionCall (imported separately to avoid circular import)
+
+
+# =============================================================================
+# Event Types
+# =============================================================================
 
 
 class EventType(Enum):

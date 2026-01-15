@@ -4,6 +4,40 @@ Rules PA enforces when reviewing Claude's code output.
 
 ---
 
+## Design Philosophy: Minimum Working Design
+
+**ALWAYS prefer the simplest approach that works.**
+
+### Do
+- Start server directly: `python app.py` or `npm run dev`
+- In-memory data structures when persistence isn't required
+- JSON files for simple data storage
+- Use built-in modules before adding dependencies
+- Single file for small projects
+- Environment variables for config
+
+### Don't
+- Database (PostgreSQL, MySQL, MongoDB) when JSON file or in-memory works
+- Redis when a Python dict or simple cache works
+- Docker for simple local development
+- Kubernetes, docker-compose for MVP
+- Complex build pipelines when not needed
+- Microservices when a monolith works
+- ORMs when raw SQL is simpler (if DB is truly needed)
+- Message queues for synchronous workflows
+- Celery/background workers for simple tasks
+
+### Ask First
+> "Does this feature actually need a database?"
+> "Can I store this in memory or a JSON file?"
+> "Will this app ever need to scale beyond one server?"
+
+### Rule of Thumb
+> If you can run it with one command without setup, do that.
+> Add complexity only when the simple approach fails.
+
+---
+
 ## Naming Conventions
 
 - **Variables**: `snake_case` for Python, `camelCase` for JS/TS
