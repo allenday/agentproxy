@@ -374,14 +374,20 @@ Examples:
             print("No project context directory set")
         return 0
     
-    def _list_sessions(self) -> int:
-        """List all available sessions."""
-        sessions = list_sessions()
+    def _list_sessions(self, working_dir: str = ".") -> int:
+        """List all available sessions for the given working directory."""
+        # Use saved workdir if available
+        saved = self._get_saved_workdir()
+        if saved:
+            working_dir = saved
+        
+        sessions = list_sessions(working_dir)
         
         if not sessions:
-            print("No sessions found.")
+            print(f"No sessions found in {working_dir}/.pa_sessions/")
             return 0
         
+        print(f"Sessions in: {working_dir}")
         print(f"{'ID':<10} {'Mission':<40} {'Tasks':<6} {'Last Active'}")
         print("-" * 80)
         

@@ -502,10 +502,15 @@ class PAMemory:
     ):
         self.working_dir = Path(working_dir).resolve()
         
-        # Default directories relative to this module
+        # Prompts are global (from PA module)
         module_dir = Path(__file__).parent
         self.prompts_dir = Path(prompts_dir) if prompts_dir else module_dir / "prompts"
-        self.sessions_dir = Path(sessions_dir) if sessions_dir else module_dir / "sessions"
+        
+        # Sessions are per-project (stored in working_dir/.pa_sessions/)
+        if sessions_dir:
+            self.sessions_dir = Path(sessions_dir)
+        else:
+            self.sessions_dir = self.working_dir / ".pa_sessions"
         
         # Tier 1: Load best practices
         self.best_practices = BestPractices.load(self.prompts_dir)

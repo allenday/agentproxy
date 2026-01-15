@@ -191,7 +191,11 @@ class PA:
                     if item.get("type") == "text" and item.get("text", "").strip():
                         yield self._emit(item["text"][:500], EventType.TEXT, source="claude")
                     elif item.get("type") == "tool_use":
-                        yield self._emit(f"{item.get('name', '?')}(...)", EventType.TOOL_CALL, source="claude")
+                        tool_name = item.get("name", "?")
+                        tool_input = item.get("input", {})
+                        # Extract key details based on tool type
+                        detail = self._format_tool_detail(tool_name, tool_input)
+                        yield self._emit(f"{tool_name}({detail})", EventType.TOOL_CALL, source="claude")
         elif event_type == "tool_result":
             content = data.get("content", "")
             if isinstance(content, list):
@@ -202,6 +206,42 @@ class PA:
             yield self._emit(f"Claude finished", EventType.COMPLETED, source="claude")
         elif event_type == "error":
             yield self._emit(str(data.get("error", "Error")), EventType.ERROR, source="claude")
+    
+    def _format_tool_detail(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
+        """Extract key details from tool input for display."""
+        name_lower = tool_name.lower()
+        
+        # File operations - show path
+        if name_lower in ("read", "read_file", "readfile"):
+            path = tool_input.get("file_path") or tool_input.get("path") or ""
+            return path.split("/")[-1] if "/" in path else path[:50]
+        
+        if name_lower in ("write", "write_file", "writefile", "edit", "edit_file"):
+            path = tool_input.get("file_path") or tool_input.get("path") or ""
+            return path.split("/")[-1] if "/" in path else path[:50]
+        
+        # Glob/search - show pattern
+        if name_lower in ("glob", "search", "find", "list"):
+            pattern = tool_input.get("pattern") or tool_input.get("glob") or tool_input.get("query") or ""
+            return pattern[:40]
+        
+        # Bash/command - show command
+        if name_lower in ("bash", "run", "execute", "shell", "command"):
+            cmd = tool_input.get("command") or tool_input.get("cmd") or ""
+            return cmd[:60]
+        
+        # TodoWrite - show task
+        if name_lower in ("todowrite", "todo"):
+            todos = tool_input.get("todos") or []
+            if todos and isinstance(todos, list):
+                return f"{len(todos)} items"
+            return ""
+        
+        # Default - show first string value found
+        for v in tool_input.values():
+            if isinstance(v, str) and v:
+                return v[:40]
+        return ""
     
     def _setup_task_breakdown(self, task: str) -> Generator[OutputEvent, None, None]:
         existing = self.agent.load_task_breakdown()
@@ -250,5 +290,7 @@ def create_pa(working_dir: str = ".", session_id: Optional[str] = None, user_mis
     return PA(working_dir=working_dir, session_id=session_id, user_mission=user_mission, **kwargs)
 
 
-def list_sessions() -> List[Dict[str, Any]]:
-    return PAMemory.list_sessions(Path(__file__).parent / "sessions")
+def list_sessions(working_dir: str = ".") -> List[Dict[str, Any]]:
+    """List sessions for a specific project directory."""
+    sessions_dir = Path(working_dir).resolve() / ".pa_sessions"
+    return PAMemory.list_sessions(sessions_dir)
