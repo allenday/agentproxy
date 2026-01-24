@@ -23,7 +23,7 @@ This directory contains a complete observability stack for AgentProxy using Open
    ```
 
 4. **View telemetry**:
-   - Grafana: http://localhost:3000 (no login required)
+   - Grafana: http://localhost:3000 (login: admin/admin)
    - Prometheus: http://localhost:9090
    - Tempo: http://localhost:3200
 
@@ -99,6 +99,33 @@ scrape_configs:
 3. Save to `grafana/dashboards/my-dashboard.json`
 4. Restart Grafana: `docker-compose restart grafana`
 
+### Enable OTLP Authentication
+For production or when exposing OTLP endpoints, add authentication to `otel-collector-config.yaml`:
+
+```yaml
+extensions:
+  headers_setter:
+    headers:
+      - key: Authorization
+        from_context: authorization
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: headers_setter
+
+service:
+  extensions: [headers_setter]
+```
+
+Then configure clients with authentication headers:
+```bash
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer your-token-here"
+```
+
 ## Troubleshooting
 
 ### No traces appearing
@@ -125,16 +152,88 @@ docker-compose down
 docker-compose down -v
 ```
 
+## ⚠️ Security Warnings
+
+**This configuration is for LOCAL DEVELOPMENT ONLY**. While basic security measures are in place, additional hardening is required for production use:
+
+### Security Configuration Status
+
+1. **TLS Communication** (`otel-collector-config.yaml`):
+   - ✅ TLS enabled for collector-to-Tempo communication
+   - ⚠️ Uses system certificates (adequate for local Docker network)
+   - **For production**: Configure mTLS with custom certificates and certificate validation
+
+2. **Grafana Authentication** (`docker-compose.yml`):
+   - ✅ Basic authentication enabled (default: admin/admin)
+   - ⚠️ Using default credentials
+   - **For production**: Change default password, enable OAuth/LDAP/SAML, implement RBAC
+
+3. **OTLP Endpoint Authentication**:
+   - ⚠️ OTLP endpoints (ports 4317, 4318) are unauthenticated
+   - Suitable for local development with trusted applications
+   - **For production**: Configure OTEL collector authentication using headers or mTLS
+
+4. **Container Security** (`docker-compose.yml`):
+   - ✅ Tempo runs as non-root user
+   - ✅ Using official images
+   - **For production**: Pin image versions, scan for vulnerabilities, use minimal base images
+
+5. **Network Isolation**:
+   - ✅ Services run on isolated Docker bridge network
+   - ⚠️ Ports exposed to localhost
+   - **For production**: Use private networks, implement firewall rules, do not expose ports publicly
+
 ## Production Notes
 
-This example stack is for **development and testing only**. For production:
+This example stack provides basic security suitable for **local development**. For production deployment:
 
-1. **Use external storage** - Configure Tempo with S3/GCS backend
-2. **Add authentication** - Enable Grafana auth and OTEL collector auth
-3. **Scale collectors** - Run multiple OTEL collectors behind load balancer
-4. **Configure retention** - Adjust based on your data volume
-5. **Add alerting** - Configure Prometheus alertmanager
-6. **Monitor the stack** - Add health checks and monitoring for OTEL components
+1. **Enhance TLS/SSL**:
+   - Generate and configure custom TLS certificates for all services
+   - Configure mTLS (mutual TLS) for service-to-service communication
+   - Enable certificate validation and pinning
+   - Use cert-manager or similar for certificate lifecycle management
+
+2. **Strengthen Authentication & Authorization**:
+   - Change Grafana default password immediately
+   - Enable Grafana SSO (OAuth, LDAP, SAML)
+   - Configure OTEL collector authentication (see "Enable OTLP Authentication" section)
+   - Use API keys or OAuth tokens for service access
+   - Implement role-based access control (RBAC)
+   - Enable audit logging
+
+3. **Use External Storage**:
+   - Configure Tempo with S3/GCS backend
+   - Use managed Prometheus or remote write
+
+4. **Network Security**:
+   - Use private networks or VPNs
+   - Implement firewall rules and security groups
+   - Do not expose ports publicly
+
+5. **Scale Collectors**:
+   - Run multiple OTEL collectors behind load balancer
+   - Configure high availability
+
+6. **Configure Retention**:
+   - Adjust based on your data volume and compliance requirements
+
+7. **Add Alerting**:
+   - Configure Prometheus Alertmanager
+   - Set up alerts for security and operational issues
+
+8. **Monitor the Stack**:
+   - Add health checks and monitoring for OTEL components
+   - Implement audit logging
+
+9. **Container Security**:
+   - Run containers as non-root users
+   - Use minimal base images
+   - Regularly update images for security patches
+   - Scan images for vulnerabilities
+
+10. **Secrets Management**:
+    - Use Docker secrets or external secrets managers
+    - Never commit credentials to version control
 
 ## Further Reading
 

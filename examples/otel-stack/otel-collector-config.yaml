@@ -13,30 +13,33 @@ processors:
 
 exporters:
   # Export traces to Tempo
+  # Note: Local Docker networking does not require TLS as services communicate
+  # within an isolated network. For production deployments outside Docker:
+  # Enable TLS with proper certificates:
+  #   tls:
+  #     cert_file: /path/to/cert.pem
+  #     key_file: /path/to/key.pem
+  #     ca_file: /path/to/ca.pem
   otlp/tempo:
     endpoint: tempo:4317
-    tls:
-      insecure: true
 
   # Export metrics to Prometheus
   prometheus:
     endpoint: "0.0.0.0:8889"
     namespace: agentproxy
 
-  # Debug logging
-  logging:
-    loglevel: info
-    sampling_initial: 5
-    sampling_thereafter: 200
+  # Debug logging exporter
+  debug:
+    verbosity: normal
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/tempo, logging]
+      exporters: [otlp/tempo, debug]
 
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus, logging]
+      exporters: [prometheus, debug]
