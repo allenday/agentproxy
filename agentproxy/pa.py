@@ -23,6 +23,7 @@ from .models import ControllerState, EventType, OutputEvent
 from .pa_agent import PAAgent
 from .pa_memory import PAMemory
 from .telemetry import get_telemetry
+from .telemetry_sanitizer import get_sanitizer
 
 
 class PADecision(str, Enum):
@@ -94,16 +95,21 @@ class PA:
     def run_task(self, task: str, max_iterations: int = 100) -> Generator[OutputEvent, None, None]:
         """Execute a task with PA supervising Claude."""
         telemetry = get_telemetry()
+        sanitizer = get_sanitizer()
 
         # Start OTEL span if enabled
         if telemetry.enabled and telemetry.tracer:
+            # Sanitize attributes to prevent sensitive data exposure
+            raw_attributes = {
+                "pa.task.description": task,
+                "pa.working_dir": self.working_dir,
+                "pa.max_iterations": max_iterations,
+            }
+            safe_attributes = sanitizer.sanitize_attributes(raw_attributes)
+
             span = telemetry.tracer.start_span(
                 "pa.run_task",
-                attributes={
-                    "pa.task.description": task[:100],  # Truncate for readability
-                    "pa.working_dir": self.working_dir,
-                    "pa.max_iterations": max_iterations,
-                }
+                attributes=safe_attributes
             )
             telemetry.tasks_started.add(1)
             telemetry.active_sessions.add(1)

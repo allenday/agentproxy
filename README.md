@@ -50,6 +50,8 @@ pip install agentproxy[server]
 pip install agentproxy[telemetry]
 ```
 
+**Privacy Note:** Telemetry is disabled by default. When enabled, sensitive data (PII, credentials) is automatically protected via data sanitization. See [Telemetry Privacy Documentation](docs/TELEMETRY_PRIVACY.md) for details.
+
 ### Development Install
 ```bash
 git clone https://github.com/allenday/agentproxy
