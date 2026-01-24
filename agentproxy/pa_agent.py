@@ -133,6 +133,7 @@ You must output:
         # State
         self._history: List[Dict[str, Any]] = []
         self._is_done = False
+        self._consecutive_errors = 0  # Track consecutive Gemini errors
         self._iteration = 0
     
     # =========================================================================
@@ -466,54 +467,151 @@ Based on current progress, provide your REASONING and FUNCTION_CALL in JSON form
     
     def _parse_agent_output(self, response: str) -> AgentLoopOutput:
         """Parse Gemini's response into structured output."""
+        # Detect Gemini error responses
+        if response.startswith("[GEMINI_ERROR:"):
+            error_info = self._parse_gemini_error(response)
+            return self._error_output(error_info)
+
         try:
             json_start = response.find("{")
             json_end = response.rfind("}") + 1
-            
+
             if json_start >= 0 and json_end > json_start:
                 json_str = response[json_start:json_end]
                 data = json.loads(json_str)
-                
+
                 reasoning = PAReasoning(
                     current_state=data.get("reasoning", {}).get("current_state", ""),
                     claude_progress=data.get("reasoning", {}).get("claude_progress", ""),
                     insights=data.get("reasoning", {}).get("insights", ""),
                     decision=data.get("reasoning", {}).get("decision", ""),
                 )
-                
+
                 func_data = data.get("function_call", {})
                 func_name = func_data.get("name", "send_to_claude")
-                
+
                 try:
                     name_enum = FunctionName(func_name)
                 except ValueError:
                     name_enum = FunctionName.SEND_TO_CLAUDE
-                
+
                 function_call = FunctionCall(
                     name=name_enum,
                     arguments=func_data.get("arguments", {}),
                 )
-                
+
+                # Reset error counter on successful parse
+                self._consecutive_errors = 0
+
                 return AgentLoopOutput(reasoning=reasoning, function_call=function_call)
-                
+
         except (json.JSONDecodeError, KeyError):
             pass
-        
-        # Fallback
-        return self._fallback_output()
-    
-    def _fallback_output(self) -> AgentLoopOutput:
+
+        # Fallback for unexpected parsing errors
+        return self._fallback_output("Response format invalid")
+
+    def _parse_gemini_error(self, error_string: str) -> dict:
+        """
+        Parse Gemini error string to extract error metadata.
+
+        Format: [GEMINI_ERROR:error_type:status_code:message] or [GEMINI_ERROR:error_type:message]
+
+        Returns:
+            dict with keys: error_type, status_code, message
+        """
+        try:
+            # Remove brackets and split
+            content = error_string.strip("[]")
+            parts = content.split(":", 3)  # Split into max 4 parts
+
+            if len(parts) >= 3:
+                # Has status code
+                if parts[2].isdigit():
+                    return {
+                        "error_type": parts[1],
+                        "status_code": int(parts[2]),
+                        "message": parts[3] if len(parts) > 3 else "Unknown error",
+                    }
+                # No status code
+                return {
+                    "error_type": parts[1],
+                    "status_code": None,
+                    "message": ":".join(parts[2:]),
+                }
+        except (IndexError, ValueError):
+            pass
+
+        return {
+            "error_type": "unknown",
+            "status_code": None,
+            "message": error_string,
+        }
+
+    def _error_output(self, error_info: dict) -> AgentLoopOutput:
+        """Return output for Gemini API errors after retries exhausted."""
+        error_type = error_info.get("error_type", "unknown")
+        status_code = error_info.get("status_code")
+        message = error_info.get("message", "Unknown error")
+
+        # Increment consecutive error count
+        self._consecutive_errors += 1
+
+        # After 3 consecutive errors, request session save
+        if self._consecutive_errors >= 3:
+            session_id = self._memory.session.session_id
+
+            return AgentLoopOutput(
+                reasoning=PAReasoning(
+                    current_state=f"Gemini API failure: {error_type} (3+ consecutive errors)",
+                    claude_progress="Unable to verify - API unavailable",
+                    insights=f"Repeated Gemini errors: {message}. Saving session for resumption.",
+                    decision=f"Save session state and exit gracefully. Session ID: {session_id}",
+                ),
+                function_call=FunctionCall(
+                    name=FunctionName.SAVE_SESSION,
+                    arguments={
+                        "reason": f"Gemini API failure after 3 consecutive errors: {error_type} - {message}",
+                        "error_type": error_type,
+                        "status_code": status_code,
+                    }
+                ),
+            )
+
+        # For first few errors, use NO_OP to allow Claude to continue
+        # The main loop will preserve the last valid instruction
+        return AgentLoopOutput(
+            reasoning=PAReasoning(
+                current_state=f"Gemini API error: {error_type}",
+                claude_progress="Unknown (verification unavailable)",
+                insights=f"Error #{self._consecutive_errors}: {message}. Allowing Claude to continue with last instruction.",
+                decision=f"Monitor without changing instruction (will save session after {3 - self._consecutive_errors} more errors)",
+            ),
+            function_call=FunctionCall(
+                name=FunctionName.NO_OP,
+                arguments={
+                    "reason": f"Gemini {error_type} error (attempt {self._consecutive_errors}/3) - preserving instruction context",
+                    "error_type": error_type,
+                    "status_code": status_code,
+                }
+            ),
+        )
+
+    def _fallback_output(self, reason: str = "Response format invalid") -> AgentLoopOutput:
         """Return fallback output when parsing fails - uses NO_OP to avoid overwriting queued instructions."""
+        # Increment error counter for parse failures too
+        self._consecutive_errors += 1
+
         return AgentLoopOutput(
             reasoning=PAReasoning(
                 current_state="Parsing error - continuing observation",
                 claude_progress="Unknown",
-                insights="",
-                decision="Continue monitoring Claude (Gemini unavailable)",
+                insights=f"Failed to parse Gemini response: {reason}. Preserving instruction context.",
+                decision=f"Continue monitoring Claude with last valid instruction (parse error #{self._consecutive_errors})",
             ),
             function_call=FunctionCall(
                 name=FunctionName.NO_OP,
-                arguments={"reason": "Gemini response parsing failed"}
+                arguments={"reason": f"Gemini response parsing failed: {reason} - preserving instruction context"}
             ),
         )
     

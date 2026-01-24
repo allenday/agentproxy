@@ -51,15 +51,19 @@ class PA:
         self.auto_verify = auto_verify
         self.auto_qa = auto_qa
         self.claude_bin = claude_bin or "claude"
-        
+
         self.agent = PAAgent(working_dir, session_id, user_mission, context_dir)
         self._display = create_display(display_mode)
         self._file_tracker = FileChangeTracker(working_dir)
-        
+
         self._state = ControllerState.IDLE
         self._claude_output_buffer: List[str] = []
         self._session_files_changed: List[str] = []
         self._previous_summary = self.agent.load_session_summary()
+
+        # Track the original task and last valid instruction for error recovery
+        self._original_task: str = ""
+        self._last_valid_instruction: str = ""
     
     @property
     def memory(self) -> PAMemory:
@@ -95,6 +99,10 @@ class PA:
         try:
             self._state = ControllerState.PROCESSING
             self._session_files_changed = []
+
+            # Store original task for error recovery
+            self._original_task = task
+            self._last_valid_instruction = task
 
             # Self-check before starting
             is_ready, status = self.agent.self_check()
@@ -164,8 +172,32 @@ class PA:
                 yield self._emit(thinking_output, EventType.THINKING, source="pa-thinking")
                 yield self._emit(f"[{result.name.value}] {result.output[:300]}", EventType.TOOL_RESULT, source="pa")
 
+                # Check if we should exit (session save or other terminal state)
+                if result.metadata.get("exit_gracefully"):
+                    # Save session with error context for resumption
+                    yield self._emit(
+                        f"[PA] Session saved due to errors. Resume with session_id: {self.session_id}",
+                        EventType.TEXT,
+                        source="pa"
+                    )
+                    break
+
+                # Get next instruction (prioritize queued, then synthesized)
                 next_instruction = self.agent.get_claude_instruction()
-                current_instruction = next_instruction if next_instruction else self._synthesize_instruction(result)
+                if next_instruction:
+                    current_instruction = next_instruction
+                    self._last_valid_instruction = next_instruction
+                else:
+                    synthesized = self._synthesize_instruction(result)
+                    # Empty string means "no instruction change" - keep previous instruction
+                    # This prevents sending vague "Continue" commands during errors
+                    if synthesized:
+                        current_instruction = synthesized
+                        self._last_valid_instruction = synthesized
+                    else:
+                        # During error states (NO_OP), keep the last valid instruction
+                        # This ensures Claude maintains context even when PA can't reason
+                        current_instruction = self._last_valid_instruction
         
             all_files = list(set(self._session_files_changed))
             summary = self.agent.generate_session_summary(task, self._claude_output_buffer, all_files)
@@ -371,10 +403,25 @@ class PA:
                 self.agent.executor._claude_queue.put({"type": "instruction", "instruction": f"Fix: {review.output}", "context": "review"})
     
     def _synthesize_instruction(self, result: FunctionResult) -> str:
+        """
+        Synthesize an instruction to send to Claude based on function result.
+
+        For NO_OP results (which occur during errors), we avoid sending vague
+        instructions and instead remain silent to let Claude continue naturally.
+        """
         if result.name == FunctionName.VERIFY_CODE:
             return "Continue" if result.success else f"Fix: {result.output[:200]}"
         elif result.name == FunctionName.RUN_TESTS:
             return "Continue" if result.success else f"Fix tests: {result.output[:200]}"
+        elif result.name == FunctionName.NO_OP:
+            # For NO_OP, remain silent (empty string signals no instruction change)
+            # This prevents sending confusing "Continue" messages during error states
+            # The main loop will keep the previous instruction instead
+            return ""
+        elif result.name == FunctionName.SAVE_SESSION:
+            # Session save triggered - let it exit naturally
+            return ""
+
         return "Continue with the task."
     
     def _emit(self, content: str, event_type: EventType = EventType.TEXT, source: str = "pa") -> OutputEvent:

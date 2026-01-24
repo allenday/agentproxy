@@ -176,7 +176,7 @@ const {{ chromium }} = require('playwright');
 
 class FunctionName(str, Enum):
     """Available functions that PA can call."""
-    
+
     NO_OP = "no_op"
     SEND_TO_CLAUDE = "send_to_claude"
     VERIFY_CODE = "verify_code"
@@ -189,6 +189,7 @@ class FunctionName(str, Enum):
     COMPLETE_TASK = "complete_task"
     REVIEW_CHANGES = "review_changes"
     VERIFY_PRODUCT = "verify_product"
+    SAVE_SESSION = "save_session"
 
 
 @dataclass
@@ -402,6 +403,19 @@ FUNCTION_DECLARATIONS: List[FunctionDeclaration] = [
             "required": []
         }
     ),
+    FunctionDeclaration(
+        name=FunctionName.SAVE_SESSION,
+        description="Save current session state and exit gracefully. Use when PA encounters repeated failures that prevent progress.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "Why session is being saved"},
+                "error_type": {"type": "string", "description": "Type of error that triggered save"},
+                "status_code": {"type": "integer", "description": "HTTP status code if applicable"}
+            },
+            "required": ["reason"]
+        }
+    ),
 ]
 
 
@@ -464,6 +478,7 @@ class FunctionExecutor:
                 FunctionName.COMPLETE_TASK: self._complete_task,
                 FunctionName.REVIEW_CHANGES: self._review_changes,
                 FunctionName.VERIFY_PRODUCT: self._verify_product,
+                FunctionName.SAVE_SESSION: self._save_session,
             }
 
             handler = handlers.get(call.name)
@@ -742,14 +757,67 @@ class FunctionExecutor:
         """Mark task as complete."""
         summary = args.get("summary", "Task completed")
         verified_items = args.get("verified_items", [])
-        
+
         return FunctionResult(
             name=FunctionName.MARK_DONE,
             success=True,
             output=f"TASK COMPLETE: {summary}",
             metadata={"summary": summary, "verified_items": verified_items, "done": True}
         )
-    
+
+    def _save_session(self, args: Dict[str, Any]) -> FunctionResult:
+        """
+        Save session state and signal graceful exit.
+
+        This is used when PA encounters repeated failures (e.g., Gemini API errors)
+        that prevent it from making progress. The session state is saved so it can
+        be resumed later.
+        """
+        reason = args.get("reason", "Unknown reason")
+        error_type = args.get("error_type", "unknown")
+        status_code = args.get("status_code")
+
+        # Save session state via memory
+        if self._memory:
+            try:
+                self._memory.session.save()
+                session_id = self._memory.session.session_id
+            except Exception as e:
+                return FunctionResult(
+                    name=FunctionName.SAVE_SESSION,
+                    success=False,
+                    output=f"Failed to save session: {e}",
+                    metadata={"error": str(e)}
+                )
+        else:
+            session_id = None
+
+        # Format output message
+        output_lines = [
+            "[PA] Session saved due to repeated failures",
+            f"Reason: {reason}",
+            f"Error type: {error_type}",
+        ]
+        if status_code:
+            output_lines.append(f"Status code: {status_code}")
+        if session_id:
+            output_lines.append(f"Session ID: {session_id}")
+            output_lines.append(f"\nTo resume this session, use: pa --session-id {session_id}")
+
+        return FunctionResult(
+            name=FunctionName.SAVE_SESSION,
+            success=True,
+            output="\n".join(output_lines),
+            metadata={
+                "reason": reason,
+                "error_type": error_type,
+                "status_code": status_code,
+                "session_id": session_id,
+                "done": True,  # Signal PA to exit
+                "exit_gracefully": True,
+            }
+        )
+
     def _create_task(self, args: Dict[str, Any]) -> FunctionResult:
         """Create a new task in the task list."""
         if not self._memory:

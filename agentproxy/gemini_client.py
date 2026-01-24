@@ -18,6 +18,46 @@ from typing import List, Optional
 from .telemetry import get_telemetry
 
 
+class GeminiAPIError(Exception):
+    """Exception for Gemini API errors with retry metadata."""
+
+    def __init__(
+        self,
+        message: str,
+        error_type: str,
+        status_code: Optional[int] = None,
+        retryable: bool = True,
+    ):
+        """
+        Initialize Gemini API error.
+
+        Args:
+            message: Error message.
+            error_type: Type of error (http, network, parse, etc).
+            status_code: HTTP status code if applicable.
+            retryable: Whether this error should be retried.
+        """
+        super().__init__(message)
+        self.message = message
+        self.error_type = error_type
+        self.status_code = status_code
+        self.retryable = retryable
+
+    @property
+    def is_client_error(self) -> bool:
+        """Return True if this is a client error (4xx) that shouldn't be retried."""
+        return self.status_code is not None and 400 <= self.status_code < 500
+
+    def to_error_string(self) -> str:
+        """Format as error string for parsing detection."""
+        if self.status_code:
+            return f"[GEMINI_ERROR:{self.error_type}:{self.status_code}:{self.message}]"
+        return f"[GEMINI_ERROR:{self.error_type}:{self.message}]"
+
+    def __str__(self) -> str:
+        return self.message
+
+
 class GeminiClient:
     """
     Client for Gemini API that powers PA's reasoning.
@@ -64,9 +104,10 @@ class GeminiClient:
         image_paths: Optional[List[str]] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        max_retries: int = 3,
     ) -> str:
         """
-        Make API call to Gemini with optional images.
+        Make API call to Gemini with optional images and retry logic.
 
         Args:
             system_prompt: System instruction for the model.
@@ -74,9 +115,61 @@ class GeminiClient:
             image_paths: Optional list of image file paths to include.
             temperature: Sampling temperature (0.0-1.0).
             max_tokens: Maximum output tokens.
+            max_retries: Maximum number of retry attempts (default: 3).
 
         Returns:
             Model's text response.
+        """
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                return self._call_once(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    image_paths=image_paths,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    attempt=attempt,
+                )
+            except GeminiAPIError as e:
+                last_error = e
+
+                # Don't retry on client errors (4xx) - these won't succeed
+                if e.is_client_error:
+                    return e.to_error_string()
+
+                # Retry on server errors (5xx) and network errors
+                if attempt < max_retries - 1:
+                    delay = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"[PA] Gemini API error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed
+                    return e.to_error_string()
+            except Exception as e:
+                # Unexpected errors - don't retry
+                return f"[Gemini Error: {str(e)[:100]}]"
+
+        # Should not reach here, but just in case
+        if last_error:
+            return last_error.to_error_string()
+        return "[Gemini Error: Unknown error]"
+
+    def _call_once(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image_paths: Optional[List[str]],
+        temperature: float,
+        max_tokens: int,
+        attempt: int,
+    ) -> str:
+        """
+        Single API call attempt (internal method).
+
+        Raises:
+            GeminiAPIError: On API or network errors.
         """
         telemetry = get_telemetry()
 
@@ -90,6 +183,7 @@ class GeminiClient:
                     "gemini.num_images": len(image_paths) if image_paths else 0,
                     "gemini.temperature": temperature,
                     "gemini.max_tokens": max_tokens,
+                    "gemini.attempt": attempt + 1,
                 }
             )
             start_time = time.time()
@@ -97,8 +191,6 @@ class GeminiClient:
             gemini_span = None
 
         try:
-            url = f"{self.API_URL}?key={self.api_key}"
-
             # Build request parts: text prompts first, then images
             parts = [
                 {"text": system_prompt},
@@ -121,21 +213,66 @@ class GeminiClient:
             }
 
             req = urllib.request.Request(
-                url,
+                self.API_URL,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
                 method="POST"
             )
 
             with urllib.request.urlopen(req, timeout=60) as response:
                 result = json.loads(response.read().decode("utf-8"))
-                response_text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+                # Safely extract response text with validation
+                if not isinstance(result, dict):
+                    raise GeminiAPIError(
+                        message="Invalid response format: expected dict",
+                        error_type="parse",
+                        retryable=False,
+                    )
+
+                candidates = result.get("candidates")
+                if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
+                    raise GeminiAPIError(
+                        message="No candidates in response",
+                        error_type="parse",
+                        retryable=False,
+                    )
+
+                content = candidates[0].get("content")
+                if not content or not isinstance(content, dict):
+                    raise GeminiAPIError(
+                        message="No content in candidate",
+                        error_type="parse",
+                        retryable=False,
+                    )
+
+                parts = content.get("parts")
+                if not parts or not isinstance(parts, list) or len(parts) == 0:
+                    raise GeminiAPIError(
+                        message="No parts in content",
+                        error_type="parse",
+                        retryable=False,
+                    )
+
+                text = parts[0].get("text")
+                if text is None:
+                    raise GeminiAPIError(
+                        message="No text in response part",
+                        error_type="parse",
+                        retryable=False,
+                    )
+
+                response_text = str(text)
 
                 # Record OTEL metrics
                 if gemini_span:
                     duration = time.time() - start_time
                     telemetry.gemini_api_duration.record(duration)
                     gemini_span.set_attribute("gemini.response_length", len(response_text))
+                    gemini_span.set_attribute("gemini.success", True)
                     gemini_span.end()
 
                 return response_text
@@ -145,29 +282,57 @@ class GeminiClient:
                 try:
                     from opentelemetry import trace as otel_trace
                     gemini_span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, f"HTTP {e.code}"))
+                    gemini_span.set_attribute("gemini.success", False)
+                    gemini_span.set_attribute("gemini.error_code", e.code)
                 except ImportError:
                     pass
                 gemini_span.end()
-            return f"[Gemini API Error: {e.code} {e.reason}]"
+            raise GeminiAPIError(
+                message=f"HTTP {e.code}: {e.reason}",
+                error_type="http",
+                status_code=e.code,
+                retryable=500 <= e.code < 600,  # Retry server errors, not client errors
+            )
         except urllib.error.URLError as e:
             if gemini_span:
                 try:
                     from opentelemetry import trace as otel_trace
                     gemini_span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, "Network error"))
+                    gemini_span.set_attribute("gemini.success", False)
                 except ImportError:
                     pass
                 gemini_span.end()
-            return f"[Gemini Network Error: {e.reason}]"
+            raise GeminiAPIError(
+                message=f"Network error: {e.reason}",
+                error_type="network",
+                retryable=True,
+            )
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            if gemini_span:
+                try:
+                    from opentelemetry import trace as otel_trace
+                    gemini_span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, "Parse error"))
+                    gemini_span.set_attribute("gemini.success", False)
+                except ImportError:
+                    pass
+                gemini_span.end()
+            raise GeminiAPIError(
+                message=f"Failed to parse Gemini response: {str(e)[:100]}",
+                error_type="parse",
+                retryable=False,  # Parse errors usually indicate API format changes
+            )
         except Exception as e:
             if gemini_span:
                 try:
                     from opentelemetry import trace as otel_trace
                     gemini_span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(e)))
                     gemini_span.record_exception(e)
+                    gemini_span.set_attribute("gemini.success", False)
                 except ImportError:
                     pass
                 gemini_span.end()
-            return f"[Gemini Error: {str(e)[:100]}]"
+            # Re-raise unexpected errors
+            raise
     
     def _encode_image(self, img_path: str) -> Optional[dict]:
         """
