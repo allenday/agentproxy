@@ -71,6 +71,25 @@ class PA:
     
     def stop(self) -> None:
         self._state = ControllerState.IDLE
+
+    def _get_subprocess_env_with_trace_context(self) -> Dict[str, str]:
+        """Get environment with OTEL trace context propagated to subprocess."""
+        import os
+        env = os.environ.copy()
+
+        # Try to inject trace context if OTEL is available
+        try:
+            from opentelemetry.propagate import inject
+            carrier = {}
+            inject(carrier)
+            # Add trace context headers to environment
+            for key, value in carrier.items():
+                env[key] = value
+        except ImportError:
+            # OTEL not available, just return base environment
+            pass
+
+        return env
     
     def run_task(self, task: str, max_iterations: int = 100) -> Generator[OutputEvent, None, None]:
         """Execute a task with PA supervising Claude."""
@@ -221,9 +240,13 @@ class PA:
             claude_span = None
 
         try:
+            # Get environment with trace context propagated if OTEL enabled
+            env = self._get_subprocess_env_with_trace_context() if telemetry.enabled else None
+
             process = subprocess.Popen(
                 [self.claude_bin, "-p", instruction, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=self.working_dir,
+                env=env,
                 bufsize=1  # Line-buffered for faster output
             )
             # Use readline() for unbuffered, real-time output
