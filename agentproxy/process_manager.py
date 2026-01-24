@@ -81,11 +81,11 @@ class ClaudeProcessManager:
         
         cmd = [
             self.config.command,
+            "-p", prompt,
             "--dangerously-skip-permissions",
             "--print",
             "--verbose",
-            "--output-format", "stream-json",
-            prompt
+            "--output-format", "stream-json"
         ]
         
         try:
