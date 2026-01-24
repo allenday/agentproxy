@@ -197,7 +197,8 @@ pa.run_task (root span)
 
 ### Modified Files:
 1. `agentproxy/function_executor.py` - Added telemetry import and instrumentation
-2. `README.md` - Added OTEL documentation and example stack reference
+2. `agentproxy/pa.py` - Added trace context propagation to Claude subprocess
+3. `README.md` - Added OTEL documentation and example stack reference
 
 ### Created Files:
 1. `examples/otel-stack/docker-compose.yml`
@@ -208,10 +209,12 @@ pa.run_task (root span)
 6. `examples/otel-stack/grafana/provisioning/dashboards/dashboards.yaml`
 7. `examples/otel-stack/grafana/dashboards/agentproxy.json`
 8. `examples/otel-stack/README.md`
+9. `tests/__init__.py`
+10. `tests/test_telemetry.py` - Comprehensive unit tests (11 tests, all passing)
 
 ### Already Instrumented (Pre-existing):
 - `agentproxy/telemetry.py` - Core telemetry infrastructure
-- `agentproxy/pa.py` - Task lifecycle and Claude subprocess
+- `agentproxy/pa.py` - Task lifecycle and Claude subprocess (now with trace propagation)
 - `agentproxy/pa_agent.py` - Reasoning loop
 - `agentproxy/gemini_client.py` - Gemini API calls
 - `agentproxy/server.py` - FastAPI auto-instrumentation
@@ -232,6 +235,8 @@ Phase 2 will add the Plugin Architecture for extensibility:
 - [x] Works WITHOUT OTEL deps (graceful degradation)
 - [x] Traces exported to OTEL collector
 - [x] Metrics available in Prometheus/Grafana
+- [x] Trace context propagation to Claude subprocess
+- [x] Unit tests created and passing (11/11)
 - [x] README updated with setup instructions
 - [x] Example stack deployable with docker-compose
 - [x] Grafana dashboard template provided
@@ -257,7 +262,45 @@ examples/otel-stack/
 
 agentproxy/
 ├── function_executor.py (modified)
+├── pa.py (modified - added trace context propagation)
 └── telemetry.py (already existed)
 
+tests/
+├── __init__.py (new)
+└── test_telemetry.py (new - 11 tests, all passing)
+
 README.md (modified)
+```
+
+## Testing Summary
+
+### Unit Tests
+All 11 unit tests pass successfully:
+
+```bash
+$ pytest tests/test_telemetry.py -v
+============================= test session starts ==============================
+tests/test_telemetry.py::TestTelemetryModule::test_telemetry_disabled_by_default PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_telemetry_disabled_with_zero PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_telemetry_enabled_with_env PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_get_telemetry_singleton PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_no_op_telemetry_when_not_available PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_instrument_fastapi_no_op_when_disabled PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_custom_endpoint_configuration PASSED
+tests/test_telemetry.py::TestTelemetryModule::test_metric_export_interval_configuration PASSED
+tests/test_telemetry.py::TestBackwardsCompatibility::test_pa_works_without_otel PASSED
+tests/test_telemetry.py::TestMetricInstruments::test_metric_instruments_created_when_enabled PASSED
+tests/test_telemetry.py::TestMetricInstruments::test_metrics_not_created_when_disabled PASSED
+============================== 11 passed in 0.26s ==============================
+```
+
+### Smoke Tests
+```bash
+# Telemetry disabled by default
+$ python -c "from agentproxy.telemetry import get_telemetry; t = get_telemetry(); print(f'Enabled: {t.enabled}')"
+Enabled: False
+
+# Telemetry enabled when ENV var set
+$ AGENTPROXY_ENABLE_TELEMETRY=1 python -c "from agentproxy.telemetry import get_telemetry; t = get_telemetry(); print(f'Enabled: {t.enabled}, Tracer: {type(t.tracer).__name__}')"
+Enabled: True, Tracer: Tracer
 ```
