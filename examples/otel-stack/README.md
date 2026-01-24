@@ -174,9 +174,9 @@ docker-compose down -v
    - **For production**: Configure OTEL collector authentication using headers or mTLS
 
 4. **Container Security** (`docker-compose.yml`):
-   - ✅ Tempo runs as non-root user
+   - ⚠️ Tempo runs as root for local dev (to avoid volume permission issues)
    - ✅ Using official images
-   - **For production**: Pin image versions, scan for vulnerabilities, use minimal base images
+   - **For production**: Configure non-root users with proper volume permissions, pin image versions, scan for vulnerabilities, use minimal base images
 
 5. **Network Isolation**:
    - ✅ Services run on isolated Docker bridge network
