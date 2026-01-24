@@ -114,8 +114,10 @@ class TestBackwardsCompatibility:
     def test_pa_works_without_otel(self):
         """PA should work normally with telemetry disabled."""
         with patch.dict(os.environ, {}, clear=True):
-            from agentproxy.telemetry import get_telemetry
+            from agentproxy.telemetry import get_telemetry, reset_telemetry
 
+            # Reset singleton to ensure fresh initialization
+            reset_telemetry()
             telemetry = get_telemetry()
 
             # Should have enabled=False

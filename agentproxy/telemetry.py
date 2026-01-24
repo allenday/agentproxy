@@ -145,7 +145,7 @@ if OTEL_AVAILABLE:
 
         def instrument_fastapi(self, app):
             """Auto-instrument FastAPI if telemetry enabled"""
-            if self.enabled:
+            if self.enabled and app is not None:
                 FastAPIInstrumentor.instrument_app(app)
 
 
@@ -166,3 +166,9 @@ def get_telemetry():
     if _telemetry is None:
         _telemetry = AgentProxyTelemetry()
     return _telemetry
+
+
+def reset_telemetry():
+    """Reset global telemetry instance (for testing)"""
+    global _telemetry
+    _telemetry = None
