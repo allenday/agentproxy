@@ -107,6 +107,21 @@ class TestTelemetryModule:
                 telemetry = AgentProxyTelemetry()
                 assert telemetry.enabled is True
 
+    def test_metric_export_interval_invalid_value(self):
+        """Should handle invalid OTEL_METRIC_EXPORT_INTERVAL gracefully."""
+        with patch.dict(os.environ, {
+            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "OTEL_METRIC_EXPORT_INTERVAL": "not-a-number",
+        }):
+            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE, reset_telemetry
+
+            if OTEL_AVAILABLE:
+                reset_telemetry()
+                telemetry = AgentProxyTelemetry()
+                # Should still initialize successfully with default value
+                assert telemetry.enabled is True
+                assert telemetry.meter is not None
+
 
 class TestBackwardsCompatibility:
     """Test backwards compatibility when OTEL is not installed."""

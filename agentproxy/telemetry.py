@@ -79,9 +79,15 @@ if OTEL_AVAILABLE:
                 endpoint=os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") or
                          os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
             )
+            # Safely parse export interval with fallback to default
+            try:
+                export_interval = int(os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "10000"))
+            except (ValueError, TypeError):
+                export_interval = 10000
+
             metric_reader = PeriodicExportingMetricReader(
                 otlp_metric_exporter,
-                export_interval_millis=int(os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "10000")),
+                export_interval_millis=export_interval,
             )
             meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
             metrics.set_meter_provider(meter_provider)
