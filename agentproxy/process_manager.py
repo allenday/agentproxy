@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Callable, List, Dict, Any, Generator
 from queue import Queue, Empty
 
-from models import ControllerState
+from .models import ControllerState
 
 
 @dataclass
@@ -81,11 +81,11 @@ class ClaudeProcessManager:
         
         cmd = [
             self.config.command,
+            "-p", prompt,
             "--dangerously-skip-permissions",
             "--print",
             "--verbose",
-            "--output-format", "stream-json",
-            prompt
+            "--output-format", "stream-json"
         ]
         
         try:

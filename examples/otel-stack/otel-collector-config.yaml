@@ -1,0 +1,45 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  # Export traces to Tempo
+  # Note: Local Docker networking does not require TLS as services communicate
+  # within an isolated network. For production deployments outside Docker:
+  # Enable TLS with proper certificates:
+  #   tls:
+  #     cert_file: /path/to/cert.pem
+  #     key_file: /path/to/key.pem
+  #     ca_file: /path/to/ca.pem
+  otlp/tempo:
+    endpoint: tempo:4317
+
+  # Export metrics to Prometheus
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: agentproxy
+
+  # Debug logging exporter
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]
