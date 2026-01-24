@@ -287,8 +287,17 @@ async def health_check():
 def main():
     """Run the server."""
     parser = argparse.ArgumentParser(description="PA Web Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    parser.add_argument(
+        "--host",
+        default=os.getenv("AGENTPROXY_SERVER_HOST", "0.0.0.0"),
+        help="Host to bind to (default: AGENTPROXY_SERVER_HOST or 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("AGENTPROXY_SERVER_PORT", "8000")),
+        help="Port to bind to (default: AGENTPROXY_SERVER_PORT or 8000)"
+    )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
     args = parser.parse_args()
     

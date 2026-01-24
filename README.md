@@ -50,7 +50,7 @@ pip install agentproxy[server]
 pip install agentproxy[telemetry]
 ```
 
-**Privacy Note:** Telemetry is disabled by default. When enabled, sensitive data (PII, credentials) is automatically protected via data sanitization. See [Telemetry Privacy Documentation](docs/TELEMETRY_PRIVACY.md) for details.
+**Privacy Note:** Telemetry is disabled by default. When enabled, task descriptions are hashed by default for zero data exposure. Configure via `AGENTPROXY_TELEMETRY_EXPORT_TASK_DESCRIPTIONS`: `none` (no export), `hash` (default, hashed only), or `full` (⚠️ DANGEROUS - only use with trusted internal systems). For custom sanitization logic, implement the `BaseSanitizer` interface.
 
 ### Development Install
 ```bash
@@ -98,20 +98,27 @@ python -m agentproxy "Create a REST API"
 Start the API server:
 
 ```bash
-# Using pa-server command
+# Using pa-server command (binds to 0.0.0.0:8000 by default)
 pa-server
 
-# Or with custom port
-pa-server --port 8080
+# Or with custom host/port via CLI args
+pa-server --host 127.0.0.1 --port 8080
+
+# Or configure via environment variables
+export AGENTPROXY_SERVER_HOST=0.0.0.0
+export AGENTPROXY_SERVER_PORT=8000
+pa-server
 
 # Or with python -m
 python -m agentproxy.server
 ```
 
+**Network Binding:** Server binds to `0.0.0.0` (all network interfaces) by default, allowing connections from remote machines in distributed deployments. Use `127.0.0.1` to restrict to localhost only.
+
 API Examples:
 
 ```bash
-# Start task
+# Start task (replace localhost with server hostname/IP for remote access)
 curl -N -X POST http://localhost:8000/task \
   -H "Content-Type: application/json" \
   -d '{"task": "Create hello.py", "working_dir": "./sandbox"}'
@@ -157,7 +164,16 @@ agentproxy supports OpenTelemetry for traces, metrics, and logs. This is **opt-i
 
 ### Configuration
 
-All configuration is via environment variables (follows [OTEL spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/)):
+All configuration is via environment variables. See `.env.example` for a complete configuration template.
+
+**Server Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTPROXY_SERVER_HOST` | `0.0.0.0` | Host to bind to (`0.0.0.0` = all interfaces, `127.0.0.1` = localhost only) |
+| `AGENTPROXY_SERVER_PORT` | `8000` | Port to bind to |
+
+**Telemetry Configuration** (follows [OTEL spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/)):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -168,6 +184,9 @@ All configuration is via environment variables (follows [OTEL spec](https://open
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | Protocol: `grpc` or `http/protobuf` |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `10000` | Metric export interval (ms) |
 | `AGENTPROXY_OWNER_ID` | `$USER` | Owner/user ID for multi-tenant tracking |
+| `AGENTPROXY_TELEMETRY_EXPORT_TASK_DESCRIPTIONS` | `hash` | Task description export mode: `none`, `hash`, or `full` (⚠️ dangerous) |
+| `AGENTPROXY_TELEMETRY_MAX_TASK_LENGTH` | `100` | Maximum task description length when exported |
+| `AGENTPROXY_CUSTOM_SANITIZER` | - | Custom sanitizer class path (e.g., `mycompany.MySanitizer`) |
 
 ### What's Instrumented
 
@@ -209,6 +228,47 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 pa "Create a hello world script"
 
 # View dashboard at http://localhost:3000
+```
+
+### Custom Sanitization
+
+The default sanitizer provides three modes (`none`, `hash`, `full`). For custom sanitization logic, implement the `BaseSanitizer` interface:
+
+```python
+# mycompany/sanitizers.py
+from agentproxy.telemetry_sanitizer import BaseSanitizer
+from typing import Any, Dict, Optional
+
+class MySanitizer(BaseSanitizer):
+    def sanitize_task_description(self, task: str) -> Optional[str]:
+        # Your custom logic here
+        # Example: detect keywords and redact entire string
+        if any(keyword in task.lower() for keyword in ['secret', 'password', 'key']):
+            return "[REDACTED - contains sensitive keywords]"
+        return task[:100]  # Or your truncation logic
+
+    def sanitize_attributes(self, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        # Your custom attribute sanitization
+        sanitized = {}
+        for key, value in attributes.items():
+            if "task" in key.lower() and isinstance(value, str):
+                sanitized[key] = self.sanitize_task_description(value)
+            else:
+                sanitized[key] = value
+        return sanitized
+```
+
+Configure via environment variable:
+```bash
+export AGENTPROXY_CUSTOM_SANITIZER=mycompany.sanitizers.MySanitizer
+```
+
+Or programmatically:
+```python
+from agentproxy.telemetry_sanitizer import set_sanitizer
+from mycompany.sanitizers import MySanitizer
+
+set_sanitizer(MySanitizer())
 ```
 
 ### Backwards Compatibility

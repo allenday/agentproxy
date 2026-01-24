@@ -103,24 +103,6 @@ class TestSensitiveDataProtection:
             # Only hash
             assert sanitized.startswith("task_")
 
-    def test_sanitized_mode_redacts_but_preserves_structure(self):
-        """
-        SECURITY TEST: Sanitized mode should redact sensitive data but keep structure.
-        """
-        with patch.dict(os.environ, {"AGENTPROXY_TELEMETRY_EXPORT_TASK_DESCRIPTIONS": "sanitized"}):
-            sanitizer = get_sanitizer()
-
-            task = "Update the API_KEY and password for authentication"
-            sanitized = sanitizer.sanitize_task_description(task)
-
-            # Sensitive terms should be redacted
-            assert "API_KEY" not in sanitized
-            assert "password" not in sanitized
-            assert "authentication" not in sanitized  # Contains 'auth' pattern
-
-            # Redaction marker should be present
-            assert "[REDACTED]" in sanitized
-
     def test_none_mode_exports_nothing(self):
         """
         SECURITY TEST: None mode should export nothing at all.

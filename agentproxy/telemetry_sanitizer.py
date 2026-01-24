@@ -1,197 +1,242 @@
 """
 Data sanitization for telemetry exports.
-Prevents sensitive user data (PII, credentials, business logic) from being exported.
+
+Provides three modes:
+- "none": Don't export task descriptions at all (maximum privacy)
+- "hash": Export only a cryptographic hash (default, safe, allows correlation)
+- "full": Export everything (⚠️ DANGEROUS - only use with trusted internal systems)
+
+For custom sanitization logic, subclass BaseSanitizer and set via set_sanitizer().
 """
 
 import os
-import re
+import hashlib
 from typing import Any, Dict, Optional
+from abc import ABC, abstractmethod
 
 
-class TelemetrySanitizer:
+class BaseSanitizer(ABC):
     """
-    Sanitizes user-provided data before exporting to telemetry systems.
+    Base class for custom telemetry sanitizers.
 
-    This prevents sensitive information like PII, credentials, API keys,
-    and confidential business logic from being exposed through telemetry.
+    Implement this interface to create custom sanitization logic.
+    Use set_sanitizer() to register your implementation.
     """
 
-    # Patterns that indicate sensitive information
-    SENSITIVE_PATTERNS = [
-        # Credentials and API keys
-        r'api[_-]?key',
-        r'password',
-        r'secret',
-        r'token',
-        r'auth',
-        r'credential',
-        r'private[_-]?key',
+    @abstractmethod
+    def sanitize_task_description(self, task: str) -> Optional[str]:
+        """
+        Sanitize a task description for export.
 
-        # PII
-        r'email',
-        r'ssn',
-        r'social[_-]?security',
-        r'credit[_-]?card',
-        r'passport',
-        r'driver[_-]?license',
+        Args:
+            task: Raw task description from user
 
-        # Common PII patterns
-        r'\b\d{3}-\d{2}-\d{4}\b',  # SSN format
-        r'\b\d{16}\b',  # Credit card-like numbers
-        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Email
-    ]
+        Returns:
+            Sanitized version safe for export, or None to omit
+        """
+        pass
+
+    @abstractmethod
+    def sanitize_attributes(self, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize telemetry attributes dictionary.
+
+        Args:
+            attributes: Raw attributes dictionary
+
+        Returns:
+            Sanitized attributes safe for export
+        """
+        pass
+
+
+class TelemetrySanitizer(BaseSanitizer):
+    """
+    Default sanitizer with three modes: none, hash, full.
+
+    This implementation does NOT attempt to surgically remove secrets from strings.
+    That approach is fundamentally flawed and creates false security.
+
+    Instead, we offer three honest choices:
+    - none: Don't export (most private)
+    - hash: Export only hash (default, safe, allows correlation)
+    - full: Export everything (only for trusted systems)
+
+    If you need custom sanitization logic, implement BaseSanitizer.
+    """
 
     def __init__(self):
-        """Initialize the sanitizer with configuration from environment."""
-        # Allow users to completely disable task description export
-        self.export_task_descriptions = os.getenv(
-            "AGENTPROXY_TELEMETRY_EXPORT_TASK_DESCRIPTIONS", "hash"
-        ).lower()
+        """Initialize sanitizer with configuration from environment."""
+        mode = os.getenv("AGENTPROXY_TELEMETRY_EXPORT_TASK_DESCRIPTIONS", "hash").lower()
 
-        # Valid values: "none" (don't export), "hash" (export hash only), "sanitized" (redact sensitive), "full" (export everything - DANGEROUS)
-        if self.export_task_descriptions not in ["none", "hash", "sanitized", "full"]:
-            self.export_task_descriptions = "hash"  # Safe default
+        # Only accept valid modes
+        if mode not in ["none", "hash", "full"]:
+            mode = "hash"  # Safe default
 
-        # Parse max task length with error handling
+        self.export_mode = mode
         self.max_task_length = self._parse_max_task_length()
 
     def _parse_max_task_length(self) -> int:
-        """
-        Safely parse AGENTPROXY_TELEMETRY_MAX_TASK_LENGTH from environment.
-
-        Returns:
-            The parsed integer value, or 100 as default if invalid.
-        """
+        """Parse max task length from environment with safe default."""
         default_length = 100
         max_length_str = os.getenv("AGENTPROXY_TELEMETRY_MAX_TASK_LENGTH", str(default_length))
         try:
             return int(max_length_str)
         except ValueError:
-            # Invalid value - use safe default
             return default_length
 
     def sanitize_task_description(self, task: str) -> Optional[str]:
         """
-        Sanitize a task description for safe export to telemetry.
+        Sanitize task description based on configured mode.
 
         Args:
-            task: The raw task description from user
+            task: Raw task description
 
         Returns:
-            Sanitized version safe for export, or None if export is disabled
+            - None if mode is "none"
+            - Hash string if mode is "hash" (default)
+            - Truncated task if mode is "full"
         """
         if not task:
             return None
 
-        mode = self.export_task_descriptions
-
-        if mode == "none":
-            # Don't export task descriptions at all
+        if self.export_mode == "none":
+            # Maximum privacy: don't export at all
             return None
 
-        elif mode == "hash":
-            # Export only a hash for task correlation, no actual content
-            import hashlib
+        elif self.export_mode == "hash":
+            # Safe default: export only hash for correlation
             task_hash = hashlib.sha256(task.encode()).hexdigest()[:16]
             return f"task_{task_hash}"
 
-        elif mode == "sanitized":
-            # Export with sensitive patterns redacted
-            sanitized = task
-
-            # Redact patterns that look sensitive
-            for pattern in self.SENSITIVE_PATTERNS:
-                sanitized = re.sub(pattern, "[REDACTED]", sanitized, flags=re.IGNORECASE)
-
-            # Truncate to prevent excessive data export
-            if len(sanitized) > self.max_task_length:
-                sanitized = sanitized[:self.max_task_length] + "..."
-
-            return sanitized
-
-        elif mode == "full":
-            # DANGEROUS: Export everything
-            # Only use in trusted, internal telemetry systems
+        elif self.export_mode == "full":
+            # ⚠️ DANGEROUS: export everything
+            # Only use with trusted, internal telemetry systems
             if len(task) > self.max_task_length:
                 return task[:self.max_task_length] + "..."
             return task
 
         return None
 
-    def sanitize_string_value(self, value: str) -> str:
-        """
-        Sanitize a single string value by redacting sensitive patterns.
-
-        This method applies pattern-based sanitization to any string value,
-        useful for paths, arguments, and other string attributes that might
-        inadvertently contain sensitive information.
-
-        Args:
-            value: The string value to sanitize
-
-        Returns:
-            Sanitized string with sensitive patterns redacted
-        """
-        if not value or not isinstance(value, str):
-            return value
-
-        sanitized = value
-
-        # Apply all sensitive patterns
-        for pattern in self.SENSITIVE_PATTERNS:
-            sanitized = re.sub(pattern, "[REDACTED]", sanitized, flags=re.IGNORECASE)
-
-        return sanitized
-
     def sanitize_attributes(self, attributes: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Sanitize all attributes in a dictionary.
+        Sanitize telemetry attributes.
 
-        This method applies appropriate sanitization to all attribute values:
-        - Task description attributes: Full task sanitization (hash/none/sanitized/full modes)
-        - String values: Pattern-based sanitization to remove sensitive data
-        - Other types: Passed through as-is
+        Applies task description sanitization to attributes containing task descriptions.
+        All other attributes pass through unchanged.
 
         Args:
-            attributes: Dictionary of span/metric attributes
+            attributes: Raw attributes dictionary
 
         Returns:
-            Sanitized dictionary safe for export
+            Sanitized attributes
         """
         sanitized = {}
 
         for key, value in attributes.items():
-            # Check if this is a task description attribute
+            # Apply task sanitization to task description attributes
             if "task" in key.lower() and "description" in key.lower():
                 if isinstance(value, str):
                     sanitized_value = self.sanitize_task_description(value)
                     if sanitized_value is not None:
                         sanitized[key] = sanitized_value
-                    # If None, omit the attribute entirely
-            elif isinstance(value, str):
-                # For any other string attribute, apply pattern-based sanitization
-                # This protects against sensitive data in paths, arguments, etc.
-                sanitized[key] = self.sanitize_string_value(value)
+                    # If None, omit the attribute
             else:
-                # For non-string attributes (numbers, booleans, etc.), keep as-is
+                # All other attributes pass through unchanged
                 sanitized[key] = value
 
         return sanitized
 
 
-# Global singleton
-_sanitizer: Optional[TelemetrySanitizer] = None
+# Global sanitizer instance
+_sanitizer: Optional[BaseSanitizer] = None
 
 
-def get_sanitizer() -> TelemetrySanitizer:
-    """Get or create global sanitizer instance."""
+def get_sanitizer() -> BaseSanitizer:
+    """
+    Get the current sanitizer instance.
+
+    Returns the global sanitizer, creating default if none exists.
+    Checks AGENTPROXY_CUSTOM_SANITIZER env var for custom implementation.
+    """
     global _sanitizer
     if _sanitizer is None:
-        _sanitizer = TelemetrySanitizer()
+        # Check for custom sanitizer via environment variable
+        custom_sanitizer_path = os.getenv("AGENTPROXY_CUSTOM_SANITIZER")
+        if custom_sanitizer_path:
+            _sanitizer = _load_custom_sanitizer(custom_sanitizer_path)
+        else:
+            _sanitizer = TelemetrySanitizer()
     return _sanitizer
 
 
+def _load_custom_sanitizer(module_path: str) -> BaseSanitizer:
+    """
+    Load a custom sanitizer from a module path.
+
+    Args:
+        module_path: Python module path like "mypackage.MySanitizer"
+
+    Returns:
+        Custom sanitizer instance
+
+    Raises:
+        ImportError: If module cannot be imported
+        AttributeError: If class not found in module
+        TypeError: If class doesn't implement BaseSanitizer
+    """
+    import importlib
+
+    # Split module path and class name
+    parts = module_path.rsplit(".", 1)
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid sanitizer path: {module_path}. "
+            "Expected format: 'module.path.ClassName'"
+        )
+
+    module_name, class_name = parts
+
+    # Import module and get class
+    module = importlib.import_module(module_name)
+    sanitizer_class = getattr(module, class_name)
+
+    # Verify it implements BaseSanitizer
+    if not issubclass(sanitizer_class, BaseSanitizer):
+        raise TypeError(
+            f"{module_path} must implement BaseSanitizer interface"
+        )
+
+    # Instantiate and return
+    return sanitizer_class()
+
+
+def set_sanitizer(sanitizer: BaseSanitizer):
+    """
+    Set a custom sanitizer implementation.
+
+    Use this to provide your own sanitization logic by implementing BaseSanitizer.
+
+    Example:
+        class MySanitizer(BaseSanitizer):
+            def sanitize_task_description(self, task: str) -> Optional[str]:
+                # Your custom logic here
+                return custom_sanitize(task)
+
+            def sanitize_attributes(self, attributes: Dict[str, Any]) -> Dict[str, Any]:
+                # Your custom logic here
+                return custom_sanitize_attrs(attributes)
+
+        set_sanitizer(MySanitizer())
+
+    Args:
+        sanitizer: Custom sanitizer implementing BaseSanitizer
+    """
+    global _sanitizer
+    _sanitizer = sanitizer
+
+
 def reset_sanitizer():
-    """Reset global sanitizer instance (for testing)."""
+    """Reset sanitizer to default (for testing)."""
     global _sanitizer
     _sanitizer = None
