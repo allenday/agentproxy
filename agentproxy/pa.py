@@ -34,8 +34,31 @@ class PADecision(str, Enum):
 
 
 class PA:
-    """PA Orchestrator - runs Claude Code with PA supervision."""
-    
+    """
+    PA Orchestrator - runs Claude Code with PA supervision.
+
+    State Machine (enables supervisor/worker composition):
+        IDLE ------> PROCESSING ------> DONE
+          ^              |                |
+          |              v                |
+          |            ERROR              |
+          |              |                |
+          |              v                |
+          +----------STOPPED <------------+
+                       |
+                    reset()
+
+    Valid transitions:
+        - IDLE → PROCESSING (via run_task())
+        - PROCESSING → DONE (task completes successfully)
+        - PROCESSING → ERROR (task fails or max iterations)
+        - PROCESSING → STOPPED (user calls stop())
+        - {DONE, ERROR, STOPPED} → IDLE (via reset())
+
+    Terminal states (DONE, ERROR, STOPPED) persist until explicit reset(),
+    enabling external observers (e.g., supervisor PA) to check completion status.
+    """
+
     def __init__(
         self,
         working_dir: str = ".",
@@ -68,13 +91,35 @@ class PA:
     @property
     def memory(self) -> PAMemory:
         return self.agent.memory
-    
+
     @property
     def session_id(self) -> str:
         return self.agent.memory.session.session_id
-    
+
+    @property
+    def state(self) -> ControllerState:
+        """Current execution state. Terminal states persist until reset()."""
+        return self._state
+
     def stop(self) -> None:
+        """Stop the current task execution."""
+        self._state = ControllerState.STOPPED
+
+    def reset(self) -> None:
+        """
+        Reset PA to IDLE state for reuse.
+
+        State Machine:
+            IDLE → PROCESSING (via run_task)
+            PROCESSING → DONE | ERROR | STOPPED (task completes/fails/interrupted)
+            {DONE, ERROR, STOPPED} → IDLE (via reset)
+
+        This enables PA reuse in supervisor/worker hierarchies where a parent
+        PA may spawn child PA instances and check their completion status.
+        """
         self._state = ControllerState.IDLE
+        self._claude_output_buffer = []
+        self._session_files_changed = []
     
     def run_task(self, task: str, max_iterations: int = 100) -> Generator[OutputEvent, None, None]:
         """Execute a task with PA supervising Claude."""
@@ -109,7 +154,7 @@ class PA:
             yield self._emit(f"[PA Self-Check]\n{status}", EventType.TEXT, source="pa")
             if not is_ready:
                 yield self._emit("[PA] Self-check failed - cannot proceed", EventType.ERROR, source="pa")
-                self._state = ControllerState.IDLE
+                self._state = ControllerState.ERROR
                 if span:
                     span.set_attribute("pa.status", "failed_self_check")
                     span.end()
@@ -220,9 +265,11 @@ class PA:
             if self.agent.is_done:
                 yield self._emit("Task completed", EventType.COMPLETED)
                 status = "completed"
+                # State already set to DONE when MARK_DONE was called
             else:
                 yield self._emit("Max iterations reached", EventType.ERROR)
                 status = "max_iterations"
+                self._state = ControllerState.ERROR
 
             # Record OTEL completion
             if span:
@@ -234,7 +281,7 @@ class PA:
                 span.end()
                 telemetry.active_sessions.add(-1)
 
-            self._state = ControllerState.IDLE
+            # State persists (DONE or ERROR) - use reset() to return to IDLE
 
         except Exception as e:
             # Record OTEL error
