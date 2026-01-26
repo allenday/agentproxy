@@ -115,7 +115,6 @@ class TestCeleryAvailability:
 
     def test_returns_false_when_celery_missing(self):
         """is_celery_available() returns False when celery is not installed."""
-        import importlib
         import sys
 
         # Save originals
@@ -125,9 +124,7 @@ class TestCeleryAvailability:
         try:
             # Force celery import to fail
             sys.modules["celery"] = None
-            # Need to reimport coordinator to pick up the change
             from agentproxy.coordinator import is_celery_available
-            # Reload the function's import attempt
             assert is_celery_available() is False
         finally:
             # Restore
@@ -140,8 +137,8 @@ class TestCeleryAvailability:
             else:
                 sys.modules.pop("redis", None)
 
-    def test_returns_true_when_both_importable(self):
-        """is_celery_available() returns True when celery and redis are importable."""
+    def test_returns_false_when_no_workers(self):
+        """is_celery_available() returns False when packages are installed but no workers respond."""
         try:
             import celery  # noqa: F401
             import redis  # noqa: F401
@@ -149,7 +146,28 @@ class TestCeleryAvailability:
             pytest.skip("celery and/or redis not installed")
 
         from agentproxy.coordinator import is_celery_available
-        assert is_celery_available() is True
+
+        mock_app = MagicMock()
+        mock_app.control.inspect.return_value.ping.return_value = None
+        with patch("agentproxy.coordinator.celery_app.make_celery_app", return_value=mock_app):
+            assert is_celery_available() is False
+
+    def test_returns_true_when_workers_respond(self):
+        """is_celery_available() returns True when workers respond to ping."""
+        try:
+            import celery  # noqa: F401
+            import redis  # noqa: F401
+        except ImportError:
+            pytest.skip("celery and/or redis not installed")
+
+        from agentproxy.coordinator import is_celery_available
+
+        mock_app = MagicMock()
+        mock_app.control.inspect.return_value.ping.return_value = {
+            "worker-1@host": {"ok": "pong"}
+        }
+        with patch("agentproxy.coordinator.celery_app.make_celery_app", return_value=mock_app):
+            assert is_celery_available() is True
 
 
 # ---------------------------------------------------------------------------
@@ -265,38 +283,26 @@ class TestContextAccumulation:
 class TestShouldUseMultiWorker:
     """Test PA._should_use_multi_worker()."""
 
-    def test_false_without_env_var(self):
-        """Returns False when AGENTPROXY_MULTI_WORKER is not set."""
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENTPROXY_MULTI_WORKER", None)
-            from agentproxy.pa import PA
+    def test_false_without_celery(self):
+        """Returns False when celery/redis are not importable."""
+        from agentproxy.pa import PA
 
-            pa = MagicMock(spec=PA)
-            pa._should_use_multi_worker = PA._should_use_multi_worker.__get__(pa)
-            assert pa._should_use_multi_worker() is False
+        pa = MagicMock(spec=PA)
+        pa._should_use_multi_worker = PA._should_use_multi_worker.__get__(pa)
 
-    def test_false_with_env_zero(self):
-        """Returns False when AGENTPROXY_MULTI_WORKER=0."""
-        with patch.dict(os.environ, {"AGENTPROXY_MULTI_WORKER": "0"}):
-            from agentproxy.pa import PA
+        with patch("agentproxy.pa.PA._should_use_multi_worker", wraps=pa._should_use_multi_worker):
+            # Mock is_celery_available to return False
+            with patch("agentproxy.coordinator.is_celery_available", return_value=False):
+                assert pa._should_use_multi_worker() is False
 
-            pa = MagicMock(spec=PA)
-            pa._should_use_multi_worker = PA._should_use_multi_worker.__get__(pa)
-            assert pa._should_use_multi_worker() is False
+    def test_true_when_workers_available(self):
+        """Returns True when is_celery_available() reports workers are running."""
+        from agentproxy.pa import PA
 
-    def test_true_with_env_and_celery(self):
-        """Returns True when env var is set and celery is available."""
-        try:
-            import celery  # noqa: F401
-            import redis  # noqa: F401
-        except ImportError:
-            pytest.skip("celery and/or redis not installed")
+        pa = MagicMock(spec=PA)
+        pa._should_use_multi_worker = PA._should_use_multi_worker.__get__(pa)
 
-        with patch.dict(os.environ, {"AGENTPROXY_MULTI_WORKER": "1"}):
-            from agentproxy.pa import PA
-
-            pa = MagicMock(spec=PA)
-            pa._should_use_multi_worker = PA._should_use_multi_worker.__get__(pa)
+        with patch("agentproxy.coordinator.is_celery_available", return_value=True):
             assert pa._should_use_multi_worker() is True
 
 
@@ -384,3 +390,249 @@ class TestMilestoneMetrics:
             assert hasattr(telemetry, "milestones_dispatched")
             assert hasattr(telemetry, "milestones_completed")
             assert hasattr(telemetry, "milestone_duration")
+
+
+# ---------------------------------------------------------------------------
+# Milestone model
+# ---------------------------------------------------------------------------
+
+
+class TestMilestone:
+    """Test Milestone dataclass and serialization."""
+
+    def test_milestone_to_dict_roundtrip(self):
+        from agentproxy.coordinator.models import Milestone
+
+        original = Milestone(index=2, prompt="Write tests", depends_on=[0, 1])
+        d = original.to_dict()
+        restored = Milestone.from_dict(d)
+
+        assert restored.index == original.index
+        assert restored.prompt == original.prompt
+        assert restored.depends_on == original.depends_on
+
+
+# ---------------------------------------------------------------------------
+# Milestone parsing with deps
+# ---------------------------------------------------------------------------
+
+
+class TestMilestoneParsingWithDeps:
+    """Test Coordinator._parse_milestones_with_deps()."""
+
+    def test_parse_with_depends_annotations(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+
+        breakdown = (
+            "- [ ] Step 1: Set up project\n"
+            "- [ ] Step 2: Build API (depends: 1)\n"
+        )
+        milestones = Coordinator._parse_milestones_with_deps(breakdown)
+        assert len(milestones) == 2
+        assert milestones[0].depends_on == []
+        assert milestones[1].depends_on == [0]  # 1-based → 0-based
+
+    def test_parse_without_depends_falls_back_sequential(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+
+        breakdown = (
+            "- [ ] Step 1: Set up\n"
+            "- [ ] Step 2: Build\n"
+            "- [ ] Step 3: Test\n"
+        )
+        milestones = Coordinator._parse_milestones_with_deps(breakdown)
+        assert len(milestones) == 3
+        assert milestones[0].depends_on == []
+        assert milestones[1].depends_on == [0]
+        assert milestones[2].depends_on == [1]
+
+    def test_parse_multi_depends(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+
+        breakdown = "- [ ] Step 1: A\n- [ ] Step 2: B\n- [ ] Step 3: C (depends: 1, 2)\n"
+        milestones = Coordinator._parse_milestones_with_deps(breakdown)
+        assert milestones[2].depends_on == [0, 1]
+
+    def test_parse_mixed_annotated_and_bare(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+
+        breakdown = (
+            "- [ ] Step 1: Setup\n"
+            "- [ ] Step 2: API (depends: 1)\n"
+            "- [ ] Step 3: Tests\n"  # bare — but annotation flag is set
+        )
+        milestones = Coordinator._parse_milestones_with_deps(breakdown)
+        assert len(milestones) == 3
+        # Step 1 has no deps annotation → empty
+        assert milestones[0].depends_on == []
+        # Step 2 has explicit dep
+        assert milestones[1].depends_on == [0]
+        # Step 3 has no annotation but since *some* annotations exist,
+        # it stays as declared (no fallback to sequential)
+        assert milestones[2].depends_on == []
+
+    def test_depends_stripped_from_prompt_text(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+
+        breakdown = "- [ ] Step 1: Do stuff (depends: 1)\n"
+        milestones = Coordinator._parse_milestones_with_deps(breakdown)
+        assert "(depends" not in milestones[0].prompt
+        assert milestones[0].prompt == "Step 1: Do stuff"
+
+
+# ---------------------------------------------------------------------------
+# Layer builder
+# ---------------------------------------------------------------------------
+
+
+class TestLayerBuilder:
+    """Test Coordinator._build_layers() topological sort."""
+
+    def test_single_milestone_one_layer(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone
+
+        milestones = [Milestone(index=0, prompt="Only task")]
+        layers = Coordinator._build_layers(milestones)
+        assert len(layers) == 1
+        assert len(layers[0]) == 1
+
+    def test_sequential_chain(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone
+
+        milestones = [
+            Milestone(index=0, prompt="A"),
+            Milestone(index=1, prompt="B", depends_on=[0]),
+            Milestone(index=2, prompt="C", depends_on=[1]),
+        ]
+        layers = Coordinator._build_layers(milestones)
+        assert len(layers) == 3
+        assert [len(l) for l in layers] == [1, 1, 1]
+
+    def test_diamond_dependency(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone
+
+        milestones = [
+            Milestone(index=0, prompt="Setup"),
+            Milestone(index=1, prompt="API", depends_on=[0]),
+            Milestone(index=2, prompt="Tests", depends_on=[0]),
+            Milestone(index=3, prompt="Integration", depends_on=[1, 2]),
+        ]
+        layers = Coordinator._build_layers(milestones)
+        assert len(layers) == 3
+        assert len(layers[0]) == 1  # Setup
+        assert len(layers[1]) == 2  # API, Tests (parallel)
+        assert len(layers[2]) == 1  # Integration
+
+    def test_all_independent(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone
+
+        milestones = [
+            Milestone(index=0, prompt="A"),
+            Milestone(index=1, prompt="B"),
+            Milestone(index=2, prompt="C"),
+            Milestone(index=3, prompt="D"),
+        ]
+        layers = Coordinator._build_layers(milestones)
+        assert len(layers) == 1
+        assert len(layers[0]) == 4
+
+    def test_cycle_breaks_on_lowest_index(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone
+
+        # Cycle: 0 → 1 → 0
+        milestones = [
+            Milestone(index=0, prompt="A", depends_on=[1]),
+            Milestone(index=1, prompt="B", depends_on=[0]),
+        ]
+        layers = Coordinator._build_layers(milestones)
+        # Should not hang — cycle is broken
+        assert len(layers) == 2
+        assert layers[0][0].index == 0  # lowest breaks first
+
+
+# ---------------------------------------------------------------------------
+# File conflict detection
+# ---------------------------------------------------------------------------
+
+
+class TestFileConflictDetection:
+    """Test Coordinator._detect_file_conflicts()."""
+
+    def test_no_conflicts(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import MilestoneResult
+
+        results = [
+            MilestoneResult(status="completed", files_changed=["a.py"], milestone_index=0),
+            MilestoneResult(status="completed", files_changed=["b.py"], milestone_index=1),
+        ]
+        conflicts = Coordinator._detect_file_conflicts(results)
+        assert conflicts == {}
+
+    def test_one_conflict(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import MilestoneResult
+
+        results = [
+            MilestoneResult(status="completed", files_changed=["shared.py"], milestone_index=0),
+            MilestoneResult(status="completed", files_changed=["shared.py"], milestone_index=1),
+        ]
+        conflicts = Coordinator._detect_file_conflicts(results)
+        assert "shared.py" in conflicts
+        assert set(conflicts["shared.py"]) == {0, 1}
+
+    def test_multiple_conflicts(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import MilestoneResult
+
+        results = [
+            MilestoneResult(status="completed", files_changed=["a.py", "b.py"], milestone_index=0),
+            MilestoneResult(status="completed", files_changed=["b.py", "c.py"], milestone_index=1),
+            MilestoneResult(status="completed", files_changed=["a.py", "c.py"], milestone_index=2),
+        ]
+        conflicts = Coordinator._detect_file_conflicts(results)
+        assert "a.py" in conflicts
+        assert "b.py" in conflicts
+        assert "c.py" in conflicts
+
+
+# ---------------------------------------------------------------------------
+# Milestone context
+# ---------------------------------------------------------------------------
+
+
+class TestMilestoneContext:
+    """Test Coordinator._build_milestone_context()."""
+
+    def test_context_from_specific_deps(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone, MilestoneResult
+
+        milestone = Milestone(index=2, prompt="Integration", depends_on=[0, 1])
+        results = {
+            0: MilestoneResult(status="completed", summary="Setup done", files_changed=["setup.py"], milestone_index=0),
+            1: MilestoneResult(status="completed", summary="API done", files_changed=["api.py"], milestone_index=1),
+        }
+        global_ctx = {"prior_summary": "", "prior_files_changed": []}
+        ctx = Coordinator._build_milestone_context(milestone, results, global_ctx)
+
+        assert "Setup done" in ctx["prior_summary"]
+        assert "API done" in ctx["prior_summary"]
+        assert "setup.py" in ctx["prior_files_changed"]
+        assert "api.py" in ctx["prior_files_changed"]
+
+    def test_context_no_deps_uses_global(self):
+        from agentproxy.coordinator.coordinator import Coordinator
+        from agentproxy.coordinator.models import Milestone
+
+        milestone = Milestone(index=0, prompt="First step")
+        global_ctx = {"prior_summary": "global stuff", "prior_files_changed": ["old.py"]}
+        ctx = Coordinator._build_milestone_context(milestone, {}, global_ctx)
+
+        assert ctx["prior_summary"] == "global stuff"
+        assert ctx["prior_files_changed"] == ["old.py"]

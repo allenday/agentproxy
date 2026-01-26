@@ -242,14 +242,11 @@ class PA:
     def _should_use_multi_worker(self) -> bool:
         """Check whether multi-worker dispatch should be used.
 
-        All three conditions must be true:
-        1. AGENTPROXY_MULTI_WORKER=1 env var is set
-        2. celery package is importable
-        3. redis package is importable
+        Returns ``True`` when both ``celery`` and ``redis`` packages are
+        importable, meaning workers *could* be pulling from the queue.
+        No env var gating — parallelism is determined by milestone
+        dependencies and available workers.
         """
-        import os
-        if os.getenv("AGENTPROXY_MULTI_WORKER", "0") != "1":
-            return False
         try:
             from .coordinator import is_celery_available
             return is_celery_available()
@@ -259,10 +256,9 @@ class PA:
     def run_task(self, task: str, max_iterations: int = 100) -> Generator[OutputEvent, None, None]:
         """Execute a task with PA supervising Claude.
 
-        If multi-worker mode is enabled (``AGENTPROXY_MULTI_WORKER=1`` and
-        Celery+Redis are available), tasks are decomposed into milestones
-        and dispatched to Celery workers.  Otherwise the existing
-        single-worker path is used.
+        When Celery+Redis are available, tasks are decomposed into
+        milestones and dispatched to Celery workers.  Otherwise the
+        existing single-worker path is used.
         """
         if self._should_use_multi_worker():
             yield from self._run_task_multi_worker(task, max_iterations)

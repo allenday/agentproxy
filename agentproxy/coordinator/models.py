@@ -14,6 +14,36 @@ from ..models import EventType, OutputEvent
 
 
 @dataclass
+class Milestone:
+    """A single milestone in a task decomposition with dependency annotations.
+
+    Attributes:
+        index: 0-based position in the milestone sequence.
+        prompt: Instruction text for this milestone.
+        depends_on: Indices of prerequisite milestones that must complete first.
+    """
+
+    index: int
+    prompt: str
+    depends_on: List[int] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "index": self.index,
+            "prompt": self.prompt,
+            "depends_on": self.depends_on,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Milestone":
+        return cls(
+            index=data.get("index", 0),
+            prompt=data.get("prompt", ""),
+            depends_on=data.get("depends_on", []),
+        )
+
+
+@dataclass
 class MilestoneResult:
     """Result from executing a single milestone via a Celery worker.
 

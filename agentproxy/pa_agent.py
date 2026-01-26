@@ -638,6 +638,10 @@ RULES:
 - Steps should be coarse suggestions, NOT detailed specifications
 - DO NOT add requirements that aren't in the original task
 - DO NOT specify implementation details like file names unless the task explicitly requires them
+- If a step MUST run after another step, add (depends: N) at the end
+- Step 1 never has dependencies
+- If a step has no dependencies, omit the annotation
+- When in doubt, add the dependency — sequential is safer than wrong parallelism
 
 FORMAT:
 ## Goal
@@ -645,7 +649,9 @@ FORMAT:
 
 ## Suggested Approach
 - [ ] Step 1: [Suggested milestone]
-- [ ] Step 2: [Suggested milestone]
+- [ ] Step 2: [Suggested milestone] (depends: 1)
+- [ ] Step 3: [Suggested milestone] (depends: 1)
+- [ ] Step 4: [Suggested milestone] (depends: 2, 3)
 
 ## Success Criteria
 [What would prove the ORIGINAL TASK is complete - nothing more, nothing less]"""
