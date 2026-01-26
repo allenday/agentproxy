@@ -1,0 +1,94 @@
+{
+  "title": "PA→Claude",
+  "uid": "pa-claude",
+  "tags": ["agentproxy", "claude"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": {"h": 2, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "**PA→Claude** - PA's observations of Claude subprocess: iterations, tool calls, file changes"}
+    },
+    {
+      "type": "stat", "title": "Claude Iterations",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 2},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(increase(agentproxy_claude_iterations_total[$__range])) or vector(0)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "none"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat", "title": "Tool Executions",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 2},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(increase(agentproxy_tools_executions_total[$__range])) or vector(0)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "none"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat", "title": "Files Modified",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 2},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(increase(agentproxy_code_files_modified_total[$__range])) or vector(0)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "none"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat", "title": "Lines Changed",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 2},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "(sum(increase(agentproxy_code_lines_added_total[$__range])) or vector(0)) + (sum(increase(agentproxy_code_lines_removed_total[$__range])) or vector(0))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "none"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "timeseries", "title": "Claude Iterations Rate",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(agentproxy_claude_iterations_total[5m])) * 60", "legendFormat": "iterations/min", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "type": "timeseries", "title": "Tool Executions by Tool",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (tool_name) (rate(agentproxy_tools_executions_total[5m])) * 60", "legendFormat": "{{tool_name}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "type": "timeseries", "title": "Tool Duration",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "histogram_quantile(0.50, sum(rate(agentproxy_tools_duration_seconds_bucket[5m])) by (le, tool_type))", "legendFormat": "p50 {{tool_type}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "histogram_quantile(0.95, sum(rate(agentproxy_tools_duration_seconds_bucket[5m])) by (le, tool_type))", "legendFormat": "p95 {{tool_type}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries", "title": "Tool Success Rate",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(agentproxy_tools_executions_total{success=\"true\"}[5m])) / sum(rate(agentproxy_tools_executions_total[5m])) * 100", "legendFormat": "Success %", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100}}
+    },
+    {
+      "type": "timeseries", "title": "Code Changes",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 22},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(agentproxy_code_lines_added_total[5m])) * 60", "legendFormat": "Lines Added/min", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(agentproxy_code_lines_removed_total[5m])) * 60", "legendFormat": "Lines Removed/min", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(agentproxy_code_files_modified_total[5m])) * 60", "legendFormat": "Files Modified/min", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    }
+  ]
+}

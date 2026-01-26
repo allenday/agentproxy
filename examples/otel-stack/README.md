@@ -142,3 +142,50 @@ This example stack is for **development and testing only**. For production:
 - [Tempo Docs](https://grafana.com/docs/tempo/latest/)
 - [Prometheus Docs](https://prometheus.io/docs/)
 - [Grafana Docs](https://grafana.com/docs/grafana/latest/)
+
+## Quick Start
+
+1. **Start the OTEL stack:**
+   ```bash
+   cd examples/otel-stack
+   docker-compose up -d
+   ```
+
+2. **Configure telemetry:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your GEMINI_API_KEY
+   ```
+
+3. **Run PA with telemetry enabled:**
+   ```bash
+   cd ../..  # Back to project root
+   source examples/otel-stack/.env  # Load config
+   pa "create a simple hello world Python script"
+   ```
+
+4. **View telemetry data:**
+   - **Grafana**: http://localhost:3000 (metrics & traces dashboard)
+   - **Prometheus**: http://localhost:9090 (raw metrics)
+   - **Tempo**: http://localhost:3200 (trace backend)
+
+## Multi-Tenant Metrics
+
+The telemetry is configured for multi-tenant aggregation. You can query by:
+
+- **User**: `agentproxy.owner="alice"`
+- **Project**: `agentproxy.project_id="my-api"`
+- **Host**: `host.name="my-laptop"`
+- **Session**: Filter traces by `pa.session_id`
+
+Example PromQL queries:
+```promql
+# Total tasks by user
+sum by (agentproxy_owner) (agentproxy_tasks_completed_total)
+
+# Token consumption by project
+sum by (agentproxy_project_id) (agentproxy_tokens_consumed_total)
+
+# Average task duration by host
+avg by (host_name) (agentproxy_task_duration_seconds)
+```
