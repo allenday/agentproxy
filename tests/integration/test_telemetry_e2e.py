@@ -386,7 +386,6 @@ class TestPrometheusMetrics:
             f"Labels present: {all_keys}"
         )
 
-    @pytest.mark.xfail(reason="FileChangeTracker._changed_files not populated during PA run")
     def test_lines_added_positive(self, pa_result, otel_stack):
         """Lines-of-code added counter is positive (fibonacci has >50 LOC)."""
         val = prom_value("agentproxy_code_lines_added_total")
@@ -394,7 +393,6 @@ class TestPrometheusMetrics:
             f"Expected code_lines_added > 0, got {val}"
         )
 
-    @pytest.mark.xfail(reason="FileChangeTracker._changed_files not populated during PA run")
     def test_files_modified_positive(self, pa_result, otel_stack):
         """Files modified counter is positive (at least pyproject + init + test)."""
         val = prom_value("agentproxy_code_files_modified_total")

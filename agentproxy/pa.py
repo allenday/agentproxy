@@ -230,14 +230,14 @@ class PA:
             tool_input = item.get("input", {})
             enrichment = process_tool_event(tool_name, tool_input)
 
+            # Always record tool execution; add enrichment labels when available
+            attrs: Dict[str, str] = {"tool_name": tool_name, "success": "true"}
             if enrichment and enrichment.labels:
-                telemetry.tool_executions.add(1, {
-                    "tool_name": tool_name,
-                    "success": "true",
-                    **enrichment.labels,  # already validated by ToolEnrichment
-                })
-                if enrichment.tags:
-                    telemetry.log(f"Tool enrichment: {tool_name} tags={enrichment.tags}")
+                attrs.update(enrichment.labels)
+            telemetry.tool_executions.add(1, attrs)
+            telemetry.log(f"Metric: tool_execution ({tool_name}, success=True)")
+            if enrichment and enrichment.tags:
+                telemetry.log(f"Tool enrichment: {tool_name} tags={enrichment.tags}")
 
     def _should_use_multi_worker(self) -> bool:
         """Check whether multi-worker dispatch should be used.
@@ -607,9 +607,12 @@ class PA:
                 telemetry.active_sessions.add(-1)
                 telemetry.log(f"Metric: active_sessions -1")
 
-                # Track code changes
+                # Track code changes across ALL iterations (not just the last)
                 if telemetry.enabled:
-                    lines_added, lines_removed = self._file_tracker.get_code_changes()
+                    all_changed = list(set(self._session_files_changed))
+                    lines_added, lines_removed = self._file_tracker.get_code_changes(
+                        files=all_changed
+                    )
                     if lines_added > 0:
                         telemetry.code_lines_added.add(lines_added)
                         telemetry.log(f"Metric: code_lines_added +{lines_added}")
@@ -617,7 +620,7 @@ class PA:
                         telemetry.code_lines_removed.add(lines_removed)
                         telemetry.log(f"Metric: code_lines_removed +{lines_removed}")
 
-                    files_modified = len(self._file_tracker._changed_files)
+                    files_modified = len(all_changed)
                     if files_modified > 0:
                         telemetry.code_files_modified.add(files_modified)
                         telemetry.log(f"Metric: code_files_modified +{files_modified}")

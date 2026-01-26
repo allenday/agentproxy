@@ -136,14 +136,19 @@ class FileChangeTracker:
             lines.append(f"  - {path} ({operation})")
         return "\n".join(lines)
 
-    def get_code_changes(self) -> tuple[int, int]:
+    def get_code_changes(self, files: list[str] | None = None) -> tuple[int, int]:
         """
         Get lines added and removed using git diff.
+
+        Args:
+            files: Explicit list of file paths to diff. When ``None``,
+                falls back to ``self._changed_files``.
 
         Returns:
             Tuple of (lines_added, lines_removed)
         """
-        if not self._changed_files:
+        changed = files or list(self._changed_files.keys())
+        if not changed:
             return (0, 0)
 
         try:
@@ -153,7 +158,6 @@ class FileChangeTracker:
 
             # Stage changed files so new (untracked) files appear in diff.
             # Uses -N (intent-to-add) to avoid modifying file content in index.
-            changed = list(self._changed_files.keys())
             subprocess.run(
                 ["git", "add", "-N", "--"] + changed,
                 cwd=cwd, capture_output=True, timeout=5,
