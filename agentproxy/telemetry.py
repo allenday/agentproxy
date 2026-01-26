@@ -320,6 +320,18 @@ if OTEL_AVAILABLE:
                 unit="s",
             )
 
+            # Stall detection tracking
+            self.stall_detections = self.meter.create_counter(
+                "agentproxy.stall.detections",
+                description="Stall events detected",
+                unit="1",
+            )
+            self.auto_completions = self.meter.create_counter(
+                "agentproxy.auto.completions",
+                description="Tasks auto-completed by PA guards",
+                unit="1",
+            )
+
             # Code change tracking
             self.code_lines_added = self.meter.create_counter(
                 "agentproxy.code.lines_added",
