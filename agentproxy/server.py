@@ -288,13 +288,14 @@ async def health_check():
 def main():
     """Run the server."""
     # Load .env file if present (for telemetry and other config)
+    # Override=True ensures .env values take precedence over shell environment
     try:
         from dotenv import load_dotenv
         from pathlib import Path
         # Load from project root .env
         env_path = Path.cwd() / ".env"
         if env_path.exists():
-            load_dotenv(env_path)
+            load_dotenv(env_path, override=True)
     except ImportError:
         # python-dotenv not installed, skip
         pass

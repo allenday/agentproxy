@@ -66,13 +66,14 @@ class RealtimeDisplay:
         Claude  (MAGENTA)  ┃ Claude ┃  Claude Code subprocess (execution)
     """
     
-    # Source-to-prefix mapping - PA, PA-thinking, PA-NextStep, PA->Claude, and Claude
+    # Source-to-prefix mapping - PA, PA-thinking, PA-NextStep, PA->Claude, Claude, and Telemetry
     SOURCE_PREFIXES = {
         "pa":          (Colors.CYAN,    "│ PA          │"),
         "pa-thinking": (Colors.BLUE,    "│ 💭 THINKING │"),
         "pa-nextstep": (Colors.BRIGHT_YELLOW + Colors.BOLD, "│ PA-nextstep │"),
         "pa-to-claude": (Colors.GREEN + Colors.BOLD, "│ PA → Claude │"),
         "claude":      (Colors.MAGENTA, "┃ Claude      ┃"),
+        "telemetry":   (Colors.DIM, "│ 📊 OTEL     │"),
     }
     
     # Event type styling configuration
@@ -198,6 +199,7 @@ class RealtimeDisplay:
         self._write(f"{Colors.BLUE}│ PA-thinking │{Colors.RESET} = PA reasoning about Claude's output")
         self._write(f"{Colors.BRIGHT_YELLOW}{Colors.BOLD}│ PA-nextstep │{Colors.RESET} = PA decision after Claude exits")
         self._write(f"{Colors.MAGENTA}┃ Claude      ┃{Colors.RESET} = Claude Code subprocess")
+        self._write(f"{Colors.DIM}│ 📊 OTEL     │{Colors.RESET} = OpenTelemetry status")
         self._write("")
     
     def render_status(self, message: str, status_type: str = "info") -> None:

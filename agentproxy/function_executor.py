@@ -494,7 +494,24 @@ class FunctionExecutor:
                 return result
 
             # Execute the handler
+            import time
+            start_time = time.time()
             result = handler(call.arguments)
+            duration = time.time() - start_time
+
+            # Record tool metrics
+            if telemetry.enabled:
+                # Tool execution counter
+                telemetry.tool_executions.add(1, {
+                    "tool_name": call.name.value.lower(),
+                    "success": str(result.success).lower()
+                })
+                telemetry.log(f"Metric: tool_execution ({call.name.value}, success={result.success})")
+
+                # Tool duration by type
+                tool_type = self._categorize_tool(call.name)
+                telemetry.tool_duration.record(duration, {"tool_type": tool_type})
+                telemetry.log(f"Metric: tool_duration {duration:.3f}s ({tool_type})")
 
             # Record verification metrics
             if call.name in [FunctionName.VERIFY_CODE, FunctionName.RUN_TESTS, FunctionName.VERIFY_PRODUCT]:
@@ -524,7 +541,25 @@ class FunctionExecutor:
                 success=False,
                 output=f"Execution error: {str(e)[:200]}"
             )
-    
+
+    def _categorize_tool(self, function_name: FunctionName) -> str:
+        """Categorize tool by execution type."""
+        subprocess_tools = {
+            FunctionName.VERIFY_CODE, FunctionName.RUN_TESTS,
+            FunctionName.CHECK_SERVER, FunctionName.VERIFY_PRODUCT
+        }
+        file_tools = {FunctionName.READ_FILE}
+        gemini_tools = {FunctionName.REVIEW_CHANGES}
+
+        if function_name in subprocess_tools:
+            return "subprocess"
+        elif function_name in file_tools:
+            return "file"
+        elif function_name in gemini_tools:
+            return "gemini"
+        else:
+            return "other"
+
     # =========================================================================
     # No-Op (fallback when Gemini fails)
     # =========================================================================

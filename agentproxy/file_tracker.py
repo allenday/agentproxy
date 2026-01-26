@@ -124,18 +124,64 @@ class FileChangeTracker:
     def get_changes_summary(self) -> str:
         """
         Get a human-readable summary of all file changes.
-        
+
         Returns:
             Summary string.
         """
         if not self._changed_files:
             return "No files were modified."
-        
+
         lines = ["Files modified by Claude:"]
         for path, operation in self._changed_files.items():
             lines.append(f"  - {path} ({operation})")
         return "\n".join(lines)
-    
+
+    def get_code_changes(self) -> tuple[int, int]:
+        """
+        Get lines added and removed using git diff.
+
+        Returns:
+            Tuple of (lines_added, lines_removed)
+        """
+        if not self._changed_files:
+            return (0, 0)
+
+        try:
+            import subprocess
+
+            cwd = self.working_dir
+
+            # Stage changed files so new (untracked) files appear in diff.
+            # Uses -N (intent-to-add) to avoid modifying file content in index.
+            changed = list(self._changed_files.keys())
+            subprocess.run(
+                ["git", "add", "-N", "--"] + changed,
+                cwd=cwd, capture_output=True, timeout=5,
+            )
+
+            # Diff against HEAD to get lines added/removed
+            result = subprocess.run(
+                ["git", "diff", "--numstat", "HEAD", "--"] + changed,
+                cwd=cwd, capture_output=True, text=True, timeout=5,
+            )
+
+            lines_added = 0
+            lines_removed = 0
+
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                    lines_added += int(parts[0])
+                    lines_removed += int(parts[1])
+
+            return (lines_added, lines_removed)
+
+        except Exception:
+            # If git fails or no git repo, return 0
+            return (0, 0)
+
     @property
     def is_done(self) -> bool:
         """Return True if Claude indicated task completion."""
