@@ -7,7 +7,7 @@ A Workstation HAS-A Fixture (VCS strategy) and lifecycle hooks.
 """
 
 from .workstation import Workstation, WorkstationState, WorkstationHook
-from .fixtures import Fixture, LocalDirFixture, GitRepoFixture
+from .fixtures import Fixture, LocalDirFixture, GitRepoFixture, GitWorktreeFixture
 
 __all__ = [
     "Workstation",
@@ -16,6 +16,7 @@ __all__ = [
     "Fixture",
     "LocalDirFixture",
     "GitRepoFixture",
+    "GitWorktreeFixture",
     "create_workstation",
 ]
 

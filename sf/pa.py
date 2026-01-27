@@ -25,6 +25,7 @@ from .models import ControllerState, EventType, OutputEvent
 from .pa_agent import PAAgent
 from .pa_memory import PAMemory
 from .telemetry import get_telemetry
+from .workstation import Workstation, create_workstation
 
 
 class PADecision(str, Enum):
@@ -71,11 +72,15 @@ class PA:
         auto_qa: bool = True,
         context_dir: Optional[str] = None,
         claude_bin: Optional[str] = None,
+        workstation: Optional[Workstation] = None,
     ) -> None:
         self.working_dir = working_dir
         self.auto_verify = auto_verify
         self.auto_qa = auto_qa
         self.claude_bin = claude_bin or "claude"
+
+        # Workstation: isolated execution environment with VCS management
+        self._workstation = workstation or create_workstation(working_dir)
 
         self.agent = PAAgent(working_dir, session_id, user_mission, context_dir)
         self._display = create_display(display_mode)
@@ -158,42 +163,6 @@ class PA:
 
         return env
 
-    def _ensure_git_repo(self) -> None:
-        """
-        Ensure working directory is a git repo with a baseline commit.
-
-        This enables reliable LOC tracking via `git diff --numstat HEAD`
-        even when the user's -d target isn't already a git repo.
-        Future: supports git worktree for parallel workers.
-        """
-        import os
-        git_dir = os.path.join(self.working_dir, ".git")
-        if os.path.exists(git_dir):
-            return  # Already a git repo
-
-        telemetry = get_telemetry()
-
-        try:
-            os.makedirs(self.working_dir, exist_ok=True)
-            subprocess.run(
-                ["git", "init"],
-                cwd=self.working_dir, capture_output=True, timeout=5,
-            )
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=self.working_dir, capture_output=True, timeout=5,
-            )
-            subprocess.run(
-                ["git", "commit", "--allow-empty", "-m", "baseline"],
-                cwd=self.working_dir, capture_output=True, timeout=5,
-            )
-            if telemetry.enabled:
-                telemetry.log("Pre-work: initialized git repo for LOC tracking")
-        except Exception as e:
-            # Non-fatal: LOC tracking degrades gracefully to (0, 0)
-            if telemetry.enabled:
-                telemetry.log(f"Pre-work: git init failed ({e}), LOC tracking unavailable")
-
     def _process_tool_enrichments(self, event_data: Dict[str, Any]) -> None:
         """
         Run tool adapters on Claude's stream-json events for enriched telemetry.
@@ -256,8 +225,13 @@ class PA:
             self._state = ControllerState.PROCESSING
             self._session_files_changed = []
 
-            # Pre-work: ensure git repo for LOC tracking
-            self._ensure_git_repo()
+            # Commission workstation (replaces _ensure_git_repo)
+            try:
+                self._workstation.commission()
+            except Exception as e:
+                telemetry = get_telemetry()
+                if telemetry.enabled:
+                    telemetry.log(f"Workstation commission failed ({e}), continuing without VCS")
 
             # Store original task for error recovery
             self._original_task = task
