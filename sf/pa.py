@@ -139,18 +139,18 @@ class PA:
         env["OTEL_SERVICE_NAME"] = "claude-code"
 
         # Session-specific resource attributes for linking
-        user_id = os.getenv("AGENTPROXY_OWNER_ID", os.getenv("USER", "unknown"))
-        project_id = os.getenv("AGENTPROXY_PROJECT_ID", "default")
+        user_id = os.getenv("SF_OWNER_ID", os.getenv("USER", "unknown"))
+        project_id = os.getenv("SF_PROJECT_ID", "default")
         namespace = os.getenv("OTEL_SERVICE_NAMESPACE", f"{user_id}.{project_id}")
 
         resource_attrs = [
             f"service.name=claude-code",
             f"service.namespace={namespace}",
             f"host.name={os.getenv('HOSTNAME', socket.gethostname())}",
-            f"agentproxy.owner={user_id}",
-            f"agentproxy.project_id={project_id}",
-            f"agentproxy.role=worker",
-            f"agentproxy.master_session_id={self.session_id}",
+            f"sf.owner={user_id}",
+            f"sf.project_id={project_id}",
+            f"sf.role=worker",
+            f"sf.master_session_id={self.session_id}",
         ]
         env["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(resource_attrs)
 
@@ -240,7 +240,7 @@ class PA:
                     "pa.task.description": task[:100],  # Truncate for readability
                     "pa.working_dir": self.working_dir,
                     "pa.max_iterations": max_iterations,
-                    "pa.project_id": os.getenv("AGENTPROXY_PROJECT_ID", "default"),
+                    "pa.project_id": os.getenv("SF_PROJECT_ID", "default"),
                 }
             )
             telemetry.log(f"Started span 'pa.run_task' (session={self.session_id[:8]})")
@@ -447,9 +447,9 @@ class PA:
                 "claude.subprocess",
                 attributes={
                     "claude.prompt_length": len(instruction),
-                    "agentproxy.iteration": iteration,
-                    "agentproxy.master_session_id": self.session_id,
-                    "agentproxy.project_id": os.getenv("AGENTPROXY_PROJECT_ID", "default"),
+                    "sf.iteration": iteration,
+                    "sf.master_session_id": self.session_id,
+                    "sf.project_id": os.getenv("SF_PROJECT_ID", "default"),
                 }
             )
             telemetry.log(f"Started span 'claude.subprocess' (iteration={iteration})")

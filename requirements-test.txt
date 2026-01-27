@@ -1,4 +1,4 @@
-# Test dependencies for agentproxy
+# Test dependencies for sf (Software Factory)
 
 # Core test framework
 pytest>=7.4.0

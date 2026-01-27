@@ -146,15 +146,15 @@ def telemetry_env():
                 env["GEMINI_API_KEY"] = v.strip()
 
     env.update({
-        "AGENTPROXY_ENABLE_TELEMETRY": "1",
-        "AGENTPROXY_TELEMETRY_VERBOSE": "1",
+        "SF_ENABLE_TELEMETRY": "1",
+        "SF_TELEMETRY_VERBOSE": "1",
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
         "OTEL_EXPORTER_OTLP_INSECURE": "true",
         "OTEL_TRACE_EXPORT_INTERVAL": "500",
         "OTEL_METRIC_EXPORT_INTERVAL": "1000",
-        "AGENTPROXY_OWNER_ID": "test-user",
-        "AGENTPROXY_PROJECT_ID": "test-fib",
-        "OTEL_SERVICE_NAME": "agentproxy-test",
+        "SF_OWNER_ID": "test-user",
+        "SF_PROJECT_ID": "test-fib",
+        "OTEL_SERVICE_NAME": "sf-test",
     })
     return env
 
@@ -171,7 +171,7 @@ def pa_result(otel_stack, fib_workdir, telemetry_env):
 
     print(f"\n[PA] Running fibonacci task in {fib_workdir} ...")
     result = subprocess.run(
-        ["pa", "-d", fib_workdir, "--display", "simple", FIB_TASK],
+        ["sf", "-d", fib_workdir, "--display", "simple", FIB_TASK],
         env=telemetry_env,
         capture_output=True,
         text=True,
@@ -311,32 +311,32 @@ class TestFibonacciTask:
 # ---------------------------------------------------------------------------
 
 class TestPrometheusMetrics:
-    """Verify agentproxy metrics were exported to Prometheus."""
+    """Verify sf metrics were exported to Prometheus."""
 
     def test_core_metrics_exist(self, pa_result, otel_stack):
-        """All core agentproxy metric names are registered."""
+        """All core sf metric names are registered."""
         names = prom_metric_names()
         expected = [
-            "agentproxy_tasks_started_total",
-            "agentproxy_tasks_completed_total",
-            "agentproxy_claude_iterations_total",
-            "agentproxy_tokens_consumed_total",
-            "agentproxy_sessions_active",
+            "sf_tasks_started_total",
+            "sf_tasks_completed_total",
+            "sf_claude_iterations_total",
+            "sf_tokens_consumed_total",
+            "sf_sessions_active",
         ]
         for name in expected:
             assert name in names, (
                 f"Metric {name} not in Prometheus. "
-                f"Available agentproxy_* metrics: "
-                f"{[m for m in names if m.startswith('agentproxy_')]}"
+                f"Available sf_* metrics: "
+                f"{[m for m in names if m.startswith('sf_')]}"
             )
 
     def test_enrichment_metrics_exist(self, pa_result, otel_stack):
         """Tool-enrichment metric names are registered."""
         names = prom_metric_names()
         enrichment = [
-            "agentproxy_tools_executions_total",
-            "agentproxy_code_lines_added_total",
-            "agentproxy_code_files_modified_total",
+            "sf_tools_executions_total",
+            "sf_code_lines_added_total",
+            "sf_code_files_modified_total",
         ]
         for name in enrichment:
             assert name in names, (
@@ -346,14 +346,14 @@ class TestPrometheusMetrics:
 
     def test_tasks_completed_positive(self, pa_result, otel_stack):
         """At least one task was completed."""
-        val = prom_value("agentproxy_tasks_completed_total")
+        val = prom_value("sf_tasks_completed_total")
         assert val is not None and val >= 1, (
             f"Expected tasks_completed >= 1, got {val}"
         )
 
     def test_tool_executions_recorded(self, pa_result, otel_stack):
         """Tool executions counter is non-zero (fibonacci needs Bash+Write)."""
-        val = prom_value("agentproxy_tools_executions_total")
+        val = prom_value("sf_tools_executions_total")
         assert val is not None and val > 0, (
             f"Expected tool_executions > 0, got {val}"
         )
@@ -365,7 +365,7 @@ class TestPrometheusMetrics:
         see series with command_category or file_extension labels.
         """
         data = prom_query(
-            '{__name__="agentproxy_tools_executions_total"}'
+            '{__name__="sf_tools_executions_total"}'
         )
         results = data.get("data", {}).get("result", [])
         assert results, "No tool_executions series found"
@@ -389,7 +389,7 @@ class TestPrometheusMetrics:
     @pytest.mark.xfail(reason="FileChangeTracker._changed_files not populated during PA run")
     def test_lines_added_positive(self, pa_result, otel_stack):
         """Lines-of-code added counter is positive (fibonacci has >50 LOC)."""
-        val = prom_value("agentproxy_code_lines_added_total")
+        val = prom_value("sf_code_lines_added_total")
         assert val is not None and val > 0, (
             f"Expected code_lines_added > 0, got {val}"
         )
@@ -397,14 +397,14 @@ class TestPrometheusMetrics:
     @pytest.mark.xfail(reason="FileChangeTracker._changed_files not populated during PA run")
     def test_files_modified_positive(self, pa_result, otel_stack):
         """Files modified counter is positive (at least pyproject + init + test)."""
-        val = prom_value("agentproxy_code_files_modified_total")
+        val = prom_value("sf_code_files_modified_total")
         assert val is not None and val >= 3, (
             f"Expected code_files_modified >= 3, got {val}"
         )
 
     def test_tokens_consumed(self, pa_result, otel_stack):
         """Token consumption is recorded (Gemini calls happened)."""
-        val = prom_value("agentproxy_tokens_consumed_total")
+        val = prom_value("sf_tokens_consumed_total")
         assert val is not None and val > 0, (
             f"Expected tokens_consumed > 0, got {val}"
         )
@@ -415,14 +415,14 @@ class TestPrometheusMetrics:
 # ---------------------------------------------------------------------------
 
 class TestMetricSchema:
-    """Verify agentproxy metrics have correct structure."""
+    """Verify sf metrics have correct structure."""
 
     def test_histogram_metrics_exist(self, pa_result, otel_stack):
         """Histogram bucket metrics are registered."""
         names = prom_metric_names()
         histograms = [
-            "agentproxy_context_window_usage_percent_bucket",
-            "agentproxy_tools_duration_seconds_bucket",
+            "sf_context_window_usage_percent_bucket",
+            "sf_tools_duration_seconds_bucket",
         ]
         for name in histograms:
             assert name in names, f"Histogram {name} not found"
@@ -431,18 +431,18 @@ class TestMetricSchema:
         """Cost and API metrics are registered."""
         names = prom_metric_names()
         expected = [
-            "agentproxy_api_requests_total",
-            "agentproxy_api_errors_total",
-            "agentproxy_api_cost_usd_total",
-            "agentproxy_tokens_prompt_total",
-            "agentproxy_tokens_completion_total",
+            "sf_api_requests_total",
+            "sf_api_errors_total",
+            "sf_api_cost_usd_total",
+            "sf_tokens_prompt_total",
+            "sf_tokens_completion_total",
         ]
         for name in expected:
             assert name in names, f"Metric {name} not found"
 
     def test_service_labels(self, pa_result, otel_stack):
         """Metrics carry expected service-level labels."""
-        data = prom_query("agentproxy_tasks_completed_total")
+        data = prom_query("sf_tasks_completed_total")
         results = data.get("data", {}).get("result", [])
         if results:
             labels = results[0]["metric"]

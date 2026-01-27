@@ -1,18 +1,18 @@
 """
-Baseline tests for agentproxy package structure compatibility.
+Baseline tests for sf package structure compatibility.
 
 These tests verify that both old and new entry points work correctly
-after the package restructuring (PR1).
+after the package restructuring.
 
 Old entry points (backward compatibility):
 - python cli.py --help
 - python server.py --help
 
 New entry points:
-- pa --help (requires pip install -e .)
-- pa-server --help (requires pip install -e .)
-- python -m agentproxy --help
-- python -m agentproxy.server --help
+- sf --help (requires pip install -e .)
+- sf-server --help (requires pip install -e .)
+- python -m sf --help
+- python -m sf.server --help
 """
 
 import subprocess
@@ -69,27 +69,27 @@ class TestNewEntryPoints:
     """Test new package entry points."""
 
     def test_python_module_cli_help(self):
-        """New entry point: python -m agentproxy --help should work"""
+        """New entry point: python -m sf --help should work"""
         result = subprocess.run(
-            [sys.executable, "-m", "agentproxy", "--help"],
+            [sys.executable, "-m", "sf", "--help"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
             timeout=10
         )
-        assert result.returncode == 0, f"python -m agentproxy --help failed: {result.stderr}"
+        assert result.returncode == 0, f"python -m sf --help failed: {result.stderr}"
         assert "PA (Proxy Agent)" in result.stdout, "Expected PA description in help output"
 
     def test_python_module_server_help(self):
-        """New entry point: python -m agentproxy.server --help should work"""
+        """New entry point: python -m sf.server --help should work"""
         result = subprocess.run(
-            [sys.executable, "-m", "agentproxy.server", "--help"],
+            [sys.executable, "-m", "sf.server", "--help"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
             timeout=10
         )
-        assert result.returncode == 0, f"python -m agentproxy.server --help failed: {result.stderr}"
+        assert result.returncode == 0, f"python -m sf.server --help failed: {result.stderr}"
         assert "PA Web Server" in result.stdout, "Expected server description in help output"
 
 
@@ -97,30 +97,30 @@ class TestPackageImports:
     """Test that package can be imported correctly."""
 
     def test_import_pa(self):
-        """Can import PA from agentproxy package"""
-        from agentproxy import PA
+        """Can import PA from sf package"""
+        from sf import PA
         assert PA is not None
 
     def test_import_create_pa(self):
         """Can import create_pa helper"""
-        from agentproxy import create_pa
+        from sf import create_pa
         assert create_pa is not None
 
     def test_import_list_sessions(self):
         """Can import list_sessions helper"""
-        from agentproxy import list_sessions
+        from sf import list_sessions
         assert list_sessions is not None
 
     def test_import_models(self):
         """Can import core models"""
-        from agentproxy import OutputEvent, EventType, ControllerState
+        from sf import OutputEvent, EventType, ControllerState
         assert OutputEvent is not None
         assert EventType is not None
         assert ControllerState is not None
 
     def test_import_memory(self):
         """Can import memory system components"""
-        from agentproxy import PAMemory, BestPractices, SessionContext, InteractionHistory
+        from sf import PAMemory, BestPractices, SessionContext, InteractionHistory
         assert PAMemory is not None
         assert BestPractices is not None
         assert SessionContext is not None
@@ -128,17 +128,17 @@ class TestPackageImports:
 
     def test_import_display(self):
         """Can import display component"""
-        from agentproxy import RealtimeDisplay
+        from sf import RealtimeDisplay
         assert RealtimeDisplay is not None
 
     def test_import_process_manager(self):
         """Can import process manager"""
-        from agentproxy import ClaudeProcessManager
+        from sf import ClaudeProcessManager
         assert ClaudeProcessManager is not None
 
     def test_package_version(self):
         """Package has version defined"""
-        from agentproxy import __version__
+        from sf import __version__
         assert __version__ is not None
         assert isinstance(__version__, str)
 
@@ -147,19 +147,19 @@ class TestPackageStructure:
     """Test that package structure is correct."""
 
     def test_package_directory_exists(self):
-        """agentproxy package directory exists"""
-        pkg_dir = PROJECT_ROOT / "agentproxy"
-        assert pkg_dir.exists(), "agentproxy directory should exist"
-        assert pkg_dir.is_dir(), "agentproxy should be a directory"
+        """sf package directory exists"""
+        pkg_dir = PROJECT_ROOT / "sf"
+        assert pkg_dir.exists(), "sf directory should exist"
+        assert pkg_dir.is_dir(), "sf should be a directory"
 
     def test_init_file_exists(self):
-        """agentproxy/__init__.py exists"""
-        init_file = PROJECT_ROOT / "agentproxy" / "__init__.py"
+        """sf/__init__.py exists"""
+        init_file = PROJECT_ROOT / "sf" / "__init__.py"
         assert init_file.exists(), "__init__.py should exist"
 
     def test_main_file_exists(self):
-        """agentproxy/__main__.py exists"""
-        main_file = PROJECT_ROOT / "agentproxy" / "__main__.py"
+        """sf/__main__.py exists"""
+        main_file = PROJECT_ROOT / "sf" / "__main__.py"
         assert main_file.exists(), "__main__.py should exist"
 
     def test_pyproject_toml_exists(self):
@@ -180,25 +180,25 @@ class TestCoreComponents:
 
     def test_cli_module_exists(self):
         """CLI module can be imported"""
-        from agentproxy import cli
+        from sf import cli
         assert hasattr(cli, 'main'), "CLI should have main function"
 
     def test_server_module_exists(self):
         """Server module can be imported"""
-        from agentproxy import server
+        from sf import server
         assert hasattr(server, 'main'), "Server should have main function"
 
     def test_pa_module_exists(self):
         """PA module can be imported"""
-        from agentproxy import pa
+        from sf import pa
         assert hasattr(pa, 'PA'), "PA module should have PA class"
 
     def test_pa_agent_module_exists(self):
         """PA agent module can be imported"""
-        from agentproxy import pa_agent
+        from sf import pa_agent
         assert pa_agent is not None
 
     def test_gemini_client_module_exists(self):
         """Gemini client module can be imported"""
-        from agentproxy import gemini_client
+        from sf import gemini_client
         assert gemini_client is not None

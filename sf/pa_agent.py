@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from .gemini_client import GeminiClient
 from .telemetry import get_telemetry
 
-# Load .env from project root (go up from agentproxy/ to project root)
+# Load .env from project root (go up from sf/ to project root)
 # Override=True ensures .env values take precedence over shell environment
 _env_path = Path(__file__).parent.parent / ".env"
 if _env_path.exists():

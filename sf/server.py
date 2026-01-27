@@ -308,7 +308,7 @@ def main():
     
     import uvicorn
     uvicorn.run(
-        "agentproxy.server:app",
+        "sf.server:app",
         host=args.host,
         port=args.port,
         reload=args.reload,

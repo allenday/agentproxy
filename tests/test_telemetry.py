@@ -15,7 +15,7 @@ class TestTelemetryModule:
         """Telemetry configuration respects .env file settings."""
         # NOTE: This test verifies that .env file loading works correctly.
         # The actual .env file in the repo has telemetry enabled for development.
-        from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+        from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
         if OTEL_AVAILABLE:
             telemetry = get_telemetry()
@@ -27,27 +27,27 @@ class TestTelemetryModule:
 
     def test_telemetry_disabled_with_zero(self):
         """Telemetry should be disabled when ENV var is 0."""
-        with patch.dict(os.environ, {"AGENTPROXY_ENABLE_TELEMETRY": "0"}):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE
+        with patch.dict(os.environ, {"SF_ENABLE_TELEMETRY": "0"}):
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
                 assert telemetry.enabled is False
 
     def test_telemetry_enabled_with_env(self):
         """Telemetry should initialize when enabled."""
-        with patch.dict(os.environ, {"AGENTPROXY_ENABLE_TELEMETRY": "1"}):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE
+        with patch.dict(os.environ, {"SF_ENABLE_TELEMETRY": "1"}):
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
                 assert telemetry.enabled is True
                 assert telemetry.tracer is not None
                 assert telemetry.meter is not None
 
     def test_get_telemetry_singleton(self):
         """get_telemetry() should return singleton instance."""
-        from agentproxy.telemetry import get_telemetry
+        from sf.telemetry import get_telemetry
 
         telemetry1 = get_telemetry()
         telemetry2 = get_telemetry()
@@ -56,7 +56,7 @@ class TestTelemetryModule:
 
     def test_no_op_telemetry_when_not_available(self):
         """When OTEL packages not available, should return no-op telemetry."""
-        from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+        from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
         telemetry = get_telemetry()
 
@@ -73,8 +73,8 @@ class TestTelemetryModule:
 
     def test_instrument_fastapi_no_op_when_disabled(self):
         """FastAPI instrumentation should be no-op when disabled."""
-        with patch.dict(os.environ, {"AGENTPROXY_ENABLE_TELEMETRY": "0"}):
-            from agentproxy.telemetry import get_telemetry
+        with patch.dict(os.environ, {"SF_ENABLE_TELEMETRY": "0"}):
+            from sf.telemetry import get_telemetry
 
             telemetry = get_telemetry()
 
@@ -84,15 +84,15 @@ class TestTelemetryModule:
     def test_custom_endpoint_configuration(self):
         """Should configure exporters with custom endpoint from ENV."""
         with patch.dict(os.environ, {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_EXPORTER_OTLP_ENDPOINT": "http://custom:4317",
             "OTEL_SERVICE_NAME": "test-service",
             "OTEL_SERVICE_NAMESPACE": "test-ns",
         }):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
                 assert telemetry.enabled is True
                 # Telemetry should be initialized with custom config
                 # (actual validation would require mocking exporters)
@@ -100,26 +100,26 @@ class TestTelemetryModule:
     def test_metric_export_interval_configuration(self):
         """Should configure metric export interval from ENV."""
         with patch.dict(os.environ, {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_METRIC_EXPORT_INTERVAL": "5000",
         }):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
                 assert telemetry.enabled is True
 
     def test_metric_export_interval_invalid_value(self):
         """Should handle invalid OTEL_METRIC_EXPORT_INTERVAL gracefully."""
         with patch.dict(os.environ, {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_METRIC_EXPORT_INTERVAL": "not-a-number",
         }):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE, reset_telemetry
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE, reset_telemetry
 
             if OTEL_AVAILABLE:
                 reset_telemetry()
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
                 # Should still initialize successfully with default value
                 assert telemetry.enabled is True
                 assert telemetry.meter is not None
@@ -131,7 +131,7 @@ class TestBackwardsCompatibility:
     def test_pa_works_without_otel(self):
         """PA should work normally with telemetry disabled."""
         with patch.dict(os.environ, {}, clear=True):
-            from agentproxy.telemetry import get_telemetry, reset_telemetry
+            from sf.telemetry import get_telemetry, reset_telemetry
 
             # Reset singleton to ensure fresh initialization
             reset_telemetry()
@@ -149,11 +149,11 @@ class TestMetricInstruments:
 
     def test_metric_instruments_created_when_enabled(self):
         """All metric instruments should be created when telemetry enabled."""
-        with patch.dict(os.environ, {"AGENTPROXY_ENABLE_TELEMETRY": "1"}):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE
+        with patch.dict(os.environ, {"SF_ENABLE_TELEMETRY": "1"}):
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
 
                 # Check counter instruments exist
                 assert hasattr(telemetry, 'tasks_started')
@@ -195,11 +195,11 @@ class TestMetricInstruments:
 
     def test_metrics_not_created_when_disabled(self):
         """Metric instruments should not be created when disabled."""
-        with patch.dict(os.environ, {"AGENTPROXY_ENABLE_TELEMETRY": "0"}):
-            from agentproxy.telemetry import AgentProxyTelemetry, OTEL_AVAILABLE
+        with patch.dict(os.environ, {"SF_ENABLE_TELEMETRY": "0"}):
+            from sf.telemetry import SFTelemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
-                telemetry = AgentProxyTelemetry()
+                telemetry = SFTelemetry()
 
                 # Metrics should not be initialized
                 assert not hasattr(telemetry, 'tasks_started') or telemetry.tasks_started is None
@@ -210,7 +210,7 @@ class TestCostCalculation:
 
     def test_calculate_cost_gemini(self):
         """Test cost calculation for Gemini API."""
-        from agentproxy.telemetry import calculate_cost
+        from sf.telemetry import calculate_cost
 
         # Test gemini-2.5-flash pricing (0.075 per 1M prompt, 0.30 per 1M completion)
         cost = calculate_cost("gemini", "gemini-2.5-flash", 10000, 2000)
@@ -219,7 +219,7 @@ class TestCostCalculation:
 
     def test_calculate_cost_claude_with_cache(self):
         """Test cost calculation for Claude API with cache tokens."""
-        from agentproxy.telemetry import calculate_cost
+        from sf.telemetry import calculate_cost
 
         # Test claude-sonnet-4-5 pricing (3.0 prompt, 15.0 completion, 3.75 cache_write, 0.30 cache_read per 1M)
         cost = calculate_cost("claude", "claude-sonnet-4-5", 5000, 1000, cache_write=2000, cache_read=8000)
@@ -230,14 +230,14 @@ class TestCostCalculation:
 
     def test_calculate_cost_unknown_model(self):
         """Test cost calculation returns 0 for unknown model."""
-        from agentproxy.telemetry import calculate_cost
+        from sf.telemetry import calculate_cost
 
         cost = calculate_cost("unknown_api", "unknown_model", 10000, 2000)
         assert cost == 0.0
 
     def test_api_pricing_constants_exist(self):
         """Test that API_PRICING constants are defined."""
-        from agentproxy.telemetry import API_PRICING, MODEL_CONTEXT_LIMITS
+        from sf.telemetry import API_PRICING, MODEL_CONTEXT_LIMITS
 
         # Check Gemini pricing exists
         assert "gemini" in API_PRICING
@@ -264,33 +264,33 @@ class TestSessionAwareTelemetry:
     def test_resource_attributes_include_project_and_role(self):
         """Resource attributes should include project_id and role for multi-tenant aggregation."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
-            "AGENTPROXY_OWNER_ID": "user123",
-            "AGENTPROXY_PROJECT_ID": "project456",
-            "AGENTPROXY_ROLE": "supervisor",
+            "SF_ENABLE_TELEMETRY": "1",
+            "SF_OWNER_ID": "user123",
+            "SF_PROJECT_ID": "project456",
+            "SF_ROLE": "supervisor",
         }
         with patch.dict(os.environ, test_env):
             # Force telemetry re-initialization by clearing singleton
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
                 # Resource attributes are set during initialization
                 # We verify they're constructed correctly by checking env vars were used
-                assert os.getenv("AGENTPROXY_PROJECT_ID") == "project456"
-                assert os.getenv("AGENTPROXY_ROLE") == "supervisor"
+                assert os.getenv("SF_PROJECT_ID") == "project456"
+                assert os.getenv("SF_ROLE") == "supervisor"
 
     def test_tokens_consumed_metric_created(self):
         """Tokens consumed metric should be created for tracking LLM usage."""
-        with patch.dict(os.environ, {"AGENTPROXY_ENABLE_TELEMETRY": "1"}):
+        with patch.dict(os.environ, {"SF_ENABLE_TELEMETRY": "1"}):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -298,15 +298,15 @@ class TestSessionAwareTelemetry:
 
     def test_claude_subprocess_env_includes_otel_vars(self):
         """Claude subprocess should get OTEL resource attributes for session linking."""
-        from agentproxy import PA
+        from sf import PA
 
         pa = PA(working_dir=".", session_id="test-session-123")
 
         # Mock telemetry enabled
         with patch.dict(os.environ, {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
-            "AGENTPROXY_OWNER_ID": "user123",
-            "AGENTPROXY_PROJECT_ID": "project456",
+            "SF_ENABLE_TELEMETRY": "1",
+            "SF_OWNER_ID": "user123",
+            "SF_PROJECT_ID": "project456",
         }):
             env = pa._get_subprocess_env_with_trace_context()
 
@@ -317,24 +317,24 @@ class TestSessionAwareTelemetry:
             # Should set resource attributes
             resource_attrs = env.get("OTEL_RESOURCE_ATTRIBUTES", "")
             assert "service.name=claude-code" in resource_attrs
-            assert "agentproxy.owner=user123" in resource_attrs
-            assert "agentproxy.project_id=project456" in resource_attrs
-            assert "agentproxy.role=worker" in resource_attrs
-            assert f"agentproxy.master_session_id={pa.session_id}" in resource_attrs
+            assert "sf.owner=user123" in resource_attrs
+            assert "sf.project_id=project456" in resource_attrs
+            assert "sf.role=worker" in resource_attrs
+            assert f"sf.master_session_id={pa.session_id}" in resource_attrs
 
     def test_service_namespace_defaults_to_user_project(self):
         """Service namespace should default to {user}.{project} for multi-tenant aggregation."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
-            "AGENTPROXY_OWNER_ID": "alice",
-            "AGENTPROXY_PROJECT_ID": "my-api",
+            "SF_ENABLE_TELEMETRY": "1",
+            "SF_OWNER_ID": "alice",
+            "SF_PROJECT_ID": "my-api",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -346,15 +346,15 @@ class TestSessionAwareTelemetry:
     def test_tls_insecure_true(self):
         """Test that OTEL_EXPORTER_OTLP_INSECURE=true disables TLS."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_EXPORTER_OTLP_INSECURE": "true",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -366,15 +366,15 @@ class TestSessionAwareTelemetry:
     def test_tls_insecure_false(self):
         """Test that OTEL_EXPORTER_OTLP_INSECURE=false enables TLS."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_EXPORTER_OTLP_INSECURE": "false",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -384,7 +384,7 @@ class TestSessionAwareTelemetry:
     def test_tls_insecure_defaults_true(self):
         """Test that TLS defaults to insecure=true if not specified."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
         }
         # Make sure INSECURE is not set
         if "OTEL_EXPORTER_OTLP_INSECURE" in os.environ:
@@ -392,10 +392,10 @@ class TestSessionAwareTelemetry:
 
         with patch.dict(os.environ, test_env, clear=False):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -407,15 +407,15 @@ class TestSessionAwareTelemetry:
     def test_trace_export_interval_configuration(self):
         """Test that OTEL_TRACE_EXPORT_INTERVAL configures batch processor."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_TRACE_EXPORT_INTERVAL": "2500",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -425,15 +425,15 @@ class TestSessionAwareTelemetry:
     def test_trace_export_interval_invalid_value(self):
         """Test that invalid OTEL_TRACE_EXPORT_INTERVAL falls back to default."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
             "OTEL_TRACE_EXPORT_INTERVAL": "invalid",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 # Should not crash, should use default
@@ -443,14 +443,14 @@ class TestSessionAwareTelemetry:
     def test_flush_telemetry_when_enabled(self):
         """Test that flush_telemetry works when telemetry is enabled."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, flush_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, flush_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -460,30 +460,30 @@ class TestSessionAwareTelemetry:
     def test_flush_telemetry_when_disabled(self):
         """Test that flush_telemetry is safe when telemetry is disabled."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "0",
+            "SF_ENABLE_TELEMETRY": "0",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import flush_telemetry
+            from sf.telemetry import flush_telemetry
 
             # Should not crash even when disabled
             flush_telemetry()
 
     def test_verbose_logging_flag(self):
-        """Test that AGENTPROXY_TELEMETRY_VERBOSE controls logging."""
+        """Test that SF_TELEMETRY_VERBOSE controls logging."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
-            "AGENTPROXY_TELEMETRY_VERBOSE": "1",
+            "SF_ENABLE_TELEMETRY": "1",
+            "SF_TELEMETRY_VERBOSE": "1",
         }
         with patch.dict(os.environ, test_env, clear=True):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()
@@ -493,18 +493,18 @@ class TestSessionAwareTelemetry:
     def test_verbose_logging_defaults_false(self):
         """Test that verbose logging defaults to false."""
         test_env = {
-            "AGENTPROXY_ENABLE_TELEMETRY": "1",
+            "SF_ENABLE_TELEMETRY": "1",
         }
         # Remove verbose flag if it exists
-        if "AGENTPROXY_TELEMETRY_VERBOSE" in os.environ:
-            del os.environ["AGENTPROXY_TELEMETRY_VERBOSE"]
+        if "SF_TELEMETRY_VERBOSE" in os.environ:
+            del os.environ["SF_TELEMETRY_VERBOSE"]
 
         with patch.dict(os.environ, test_env, clear=False):
             # Force re-init
-            import agentproxy.telemetry
-            agentproxy.telemetry._telemetry = None
+            import sf.telemetry
+            sf.telemetry._telemetry = None
 
-            from agentproxy.telemetry import get_telemetry, OTEL_AVAILABLE
+            from sf.telemetry import get_telemetry, OTEL_AVAILABLE
 
             if OTEL_AVAILABLE:
                 telemetry = get_telemetry()

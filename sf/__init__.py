@@ -1,19 +1,11 @@
 """
-Agent Proxy - PA (Proxy Agent)
+SF (Software Factory)
 ===============================================
 
-Unified AI agent that supervises Claude Code with:
-- PA-Thinking: Reasoning about Claude's actions
-- PA-QA: Generating and running tests
-- PA-Verify: Executing and validating code
-
-Three-tier memory system:
-1. Best Practices: Static rules from prompts/*.md
-2. Session Context: High-level mission, persists hours/days
-3. Interaction History: Rolling window of Claude interactions
+Manufacturing-inspired agent orchestration for coding agents (Claude Code, etc.).
 
 Usage:
-    from agentproxy import PA
+    from sf import PA
 
     pa = PA(working_dir=".", user_mission="Build a REST API")
     for event in pa.run_task("Create user endpoints"):

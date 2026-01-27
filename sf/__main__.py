@@ -1,5 +1,5 @@
 """
-Entry point for 'python -m agentproxy' and 'pa' command.
+Entry point for 'python -m sf' and 'sf' command.
 """
 from .cli import main
 

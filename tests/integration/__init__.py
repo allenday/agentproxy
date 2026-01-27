@@ -1,1 +1,1 @@
-"""Integration tests for agentproxy workflows."""
+"""Integration tests for sf workflows."""

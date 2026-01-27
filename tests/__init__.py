@@ -1,5 +1,5 @@
 """
-Test suite for agentproxy.
+Test suite for sf (Software Factory).
 
 Organization:
 - unit/: Unit tests for individual components

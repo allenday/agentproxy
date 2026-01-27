@@ -14,9 +14,9 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agentproxy.pa_agent import PAAgent
-from agentproxy.function_executor import FunctionName, FunctionResult
-from agentproxy.models import PAReasoning
+from sf.pa_agent import PAAgent
+from sf.function_executor import FunctionName, FunctionResult
+from sf.models import PAReasoning
 
 
 def test_error_output():

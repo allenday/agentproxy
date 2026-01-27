@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentproxy"
-version = "0.2.0"
-description = "AI supervisor layer for orchestrating coding agents"
+name = "sf"
+version = "0.3.0"
+description = "Software Factory - Manufacturing-inspired agent orchestration"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "agentproxy contributors"}
+    {name = "sf contributors"}
 ]
-keywords = ["ai", "agent", "supervisor", "claude", "llm", "devops"]
+keywords = ["ai", "agent", "supervisor", "claude", "llm", "devops", "factory"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -45,6 +45,11 @@ telemetry = [
     "opentelemetry-instrumentation-fastapi>=0.41b0",
 ]
 
+# Worker dependencies (Celery+Redis)
+worker = [
+    "celery[redis]>=5.3.0",
+]
+
 # Plugin system dependencies (future)
 plugins = [
     # No extra deps initially, may add later
@@ -61,12 +66,13 @@ dev = [
 
 # All optional dependencies
 all = [
-    "agentproxy[server,telemetry,plugins,dev]",
+    "sf[server,telemetry,worker,plugins,dev]",
 ]
 
 [project.scripts]
-pa = "agentproxy.cli:main"
-pa-server = "agentproxy.server:main"
+sf = "sf.cli:main"
+sf-server = "sf.server:main"
+sf-worker = "sf.shopfloor.worker_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/allenday/agentproxy"
@@ -75,7 +81,7 @@ Issues = "https://github.com/allenday/agentproxy/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agentproxy*"]
+include = ["sf*"]
 exclude = ["tests*", "sandbox*", "sessions*", "venv*"]
 
 [tool.pytest.ini_options]

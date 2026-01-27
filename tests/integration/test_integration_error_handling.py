@@ -12,8 +12,8 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agentproxy.pa import PA
-from agentproxy.function_executor import FunctionName
+from sf.pa import PA
+from sf.function_executor import FunctionName
 
 
 def test_instruction_preservation_during_errors():
@@ -121,7 +121,7 @@ def test_session_save_after_3_errors():
     print("Integration Test: Session Save After 3 Errors")
     print("="*70 + "\n")
 
-    from agentproxy.pa_agent import PAAgent
+    from sf.pa_agent import PAAgent
 
     agent = PAAgent(working_dir=".", session_id="test-3-errors")
 

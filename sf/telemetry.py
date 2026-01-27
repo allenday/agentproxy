@@ -1,5 +1,5 @@
 """
-OpenTelemetry instrumentation for agentproxy.
+OpenTelemetry instrumentation for sf (Software Factory).
 Provides traces, metrics, and logs for PA operations.
 
 This module has conditional imports - OTEL is optional.
@@ -64,47 +64,47 @@ class NoOpTelemetry:
 
 
 if OTEL_AVAILABLE:
-    class AgentProxyTelemetry:
-        """Manages OTEL instrumentation for agentproxy"""
+    class SFTelemetry:
+        """Manages OTEL instrumentation for sf (Software Factory)"""
 
         def __init__(self):
-            self.enabled = os.getenv("AGENTPROXY_ENABLE_TELEMETRY", "0") == "1"
-            self.verbose = os.getenv("AGENTPROXY_TELEMETRY_VERBOSE", "0") == "1"
+            self.enabled = os.getenv("SF_ENABLE_TELEMETRY", "0") == "1"
+            self.verbose = os.getenv("SF_TELEMETRY_VERBOSE", "0") == "1"
             self.tracer: Optional[trace.Tracer] = None
             self.meter: Optional[metrics.Meter] = None
 
             # Print telemetry status
             if self.enabled:
-                print("\033[2m│ 📊 OTEL     │\033[0m Telemetry ENABLED (AGENTPROXY_ENABLE_TELEMETRY=1)")
+                print("\033[2m│ 📊 OTEL     │\033[0m Telemetry ENABLED (SF_ENABLE_TELEMETRY=1)")
                 if self.verbose:
-                    print("\033[2m│ 📊 OTEL     │\033[0m Verbose logging ON (AGENTPROXY_TELEMETRY_VERBOSE=1)")
+                    print("\033[2m│ 📊 OTEL     │\033[0m Verbose logging ON (SF_TELEMETRY_VERBOSE=1)")
                 self._init_telemetry()
             else:
-                print("\033[2m│ 📊 OTEL     │\033[0m Telemetry disabled (set AGENTPROXY_ENABLE_TELEMETRY=1 to enable)")
+                print("\033[2m│ 📊 OTEL     │\033[0m Telemetry disabled (set SF_ENABLE_TELEMETRY=1 to enable)")
 
         def _init_telemetry(self):
             """Initialize OTEL providers and exporters"""
             try:
                 # Build resource attributes
                 # Multi-tenant namespace: {user}.{project} for aggregation
-                user_id = os.getenv("AGENTPROXY_OWNER_ID", os.getenv("USER", "unknown"))
-                project_id = os.getenv("AGENTPROXY_PROJECT_ID", "default")
+                user_id = os.getenv("SF_OWNER_ID", os.getenv("USER", "unknown"))
+                project_id = os.getenv("SF_PROJECT_ID", "default")
                 namespace = os.getenv("OTEL_SERVICE_NAMESPACE", f"{user_id}.{project_id}")
 
                 print(f"\033[2m│ 📊 OTEL     │\033[0m Initializing telemetry...")
-                print(f"\033[2m│ 📊 OTEL     │\033[0m   Service: {os.getenv('OTEL_SERVICE_NAME', 'agentproxy')}")
+                print(f"\033[2m│ 📊 OTEL     │\033[0m   Service: {os.getenv('OTEL_SERVICE_NAME', 'sf')}")
                 print(f"\033[2m│ 📊 OTEL     │\033[0m   Namespace: {namespace}")
                 print(f"\033[2m│ 📊 OTEL     │\033[0m   Owner: {user_id}")
                 print(f"\033[2m│ 📊 OTEL     │\033[0m   Project: {project_id}")
-                print(f"\033[2m│ 📊 OTEL     │\033[0m   Role: {os.getenv('AGENTPROXY_ROLE', 'supervisor')}")
+                print(f"\033[2m│ 📊 OTEL     │\033[0m   Role: {os.getenv('SF_ROLE', 'supervisor')}")
 
                 resource = Resource.create({
-                    "service.name": os.getenv("OTEL_SERVICE_NAME", "agentproxy"),
+                    "service.name": os.getenv("OTEL_SERVICE_NAME", "sf"),
                     "service.namespace": namespace,
                     "host.name": os.getenv("HOSTNAME", socket.gethostname()),
-                    "agentproxy.owner": user_id,
-                    "agentproxy.project_id": project_id,
-                    "agentproxy.role": os.getenv("AGENTPROXY_ROLE", "supervisor"),
+                    "sf.owner": user_id,
+                    "sf.project_id": project_id,
+                    "sf.role": os.getenv("SF_ROLE", "supervisor"),
                 })
 
                 # Traces
@@ -113,8 +113,6 @@ if OTEL_AVAILABLE:
                 print(f"\033[2m│ 📊 OTEL     │\033[0m   Trace endpoint: {trace_endpoint}")
 
                 # Safely parse trace export interval with fallback to default (1000ms = 1 second)
-                # Lower values = more real-time visibility in Grafana but higher overhead
-                # 1000ms provides good balance between latency and performance
                 try:
                     trace_export_interval = int(os.getenv("OTEL_TRACE_EXPORT_INTERVAL", "1000"))
                 except (ValueError, TypeError):
@@ -130,15 +128,11 @@ if OTEL_AVAILABLE:
                     insecure=use_insecure
                 )
                 print(f"\033[2m│ 📊 OTEL     │\033[0m   TLS: {'disabled (insecure)' if use_insecure else 'enabled (secure)'}")
-                # Configure batch processor for periodic exports
-                # schedule_delay_millis: time between exports (configured via env var)
-                # max_queue_size: maximum spans to buffer before forced export
-                # max_export_batch_size: maximum spans per export batch
                 batch_processor = BatchSpanProcessor(
                     otlp_trace_exporter,
                     schedule_delay_millis=trace_export_interval,
-                    max_queue_size=2048,  # Default is 2048
-                    max_export_batch_size=512,  # Default is 512
+                    max_queue_size=2048,
+                    max_export_batch_size=512,
                 )
                 trace_provider.add_span_processor(batch_processor)
                 trace.set_tracer_provider(trace_provider)
@@ -191,131 +185,131 @@ if OTEL_AVAILABLE:
             """Create metric instruments"""
             # Counters
             self.tasks_started = self.meter.create_counter(
-                "agentproxy.tasks.started",
+                "sf.tasks.started",
                 description="Number of tasks started",
                 unit="1",
             )
             self.tasks_completed = self.meter.create_counter(
-                "agentproxy.tasks.completed",
+                "sf.tasks.completed",
                 description="Number of tasks completed",
                 unit="1",
             )
             self.claude_iterations = self.meter.create_counter(
-                "agentproxy.claude.iterations",
+                "sf.claude.iterations",
                 description="Number of Claude invocations",
                 unit="1",
             )
             self.verifications = self.meter.create_counter(
-                "agentproxy.verifications",
+                "sf.verifications",
                 description="Number of verifications run",
                 unit="1",
             )
             self.pa_decisions = self.meter.create_counter(
-                "agentproxy.pa.decisions",
+                "sf.pa.decisions",
                 description="PA decisions made",
                 unit="1",
             )
             self.tokens_consumed = self.meter.create_counter(
-                "agentproxy.tokens.consumed",
+                "sf.tokens.consumed",
                 description="Total LLM tokens consumed (prompt + completion)",
                 unit="tokens",
             )
 
             # Histograms
             self.task_duration = self.meter.create_histogram(
-                "agentproxy.task.duration",
+                "sf.task.duration",
                 description="Task duration",
                 unit="s",
             )
             self.pa_reasoning_duration = self.meter.create_histogram(
-                "agentproxy.pa.reasoning.duration",
+                "sf.pa.reasoning.duration",
                 description="PA reasoning cycle duration",
                 unit="s",
             )
             self.gemini_api_duration = self.meter.create_histogram(
-                "agentproxy.gemini.api.duration",
+                "sf.gemini.api.duration",
                 description="Gemini API call duration",
                 unit="s",
             )
 
             # Gauges
             self.active_sessions = self.meter.create_up_down_counter(
-                "agentproxy.sessions.active",
+                "sf.sessions.active",
                 description="Number of active sessions",
                 unit="1",
             )
 
             # Tool execution tracking
             self.tool_executions = self.meter.create_counter(
-                "agentproxy.tools.executions",
+                "sf.tools.executions",
                 description="Tool executions by name and outcome",
                 unit="1",
             )
             self.tool_duration = self.meter.create_histogram(
-                "agentproxy.tools.duration",
+                "sf.tools.duration",
                 description="Tool execution duration by type",
                 unit="s",
             )
 
             # Token breakdown (replace single tokens_consumed)
             self.tokens_prompt = self.meter.create_counter(
-                "agentproxy.tokens.prompt",
+                "sf.tokens.prompt",
                 description="Prompt tokens by API and model",
                 unit="tokens",
             )
             self.tokens_completion = self.meter.create_counter(
-                "agentproxy.tokens.completion",
+                "sf.tokens.completion",
                 description="Completion tokens by API and model",
                 unit="tokens",
             )
             self.tokens_cache_write = self.meter.create_counter(
-                "agentproxy.tokens.cache_write",
+                "sf.tokens.cache_write",
                 description="Cache write tokens (future-ready)",
                 unit="tokens",
             )
             self.tokens_cache_read = self.meter.create_counter(
-                "agentproxy.tokens.cache_read",
+                "sf.tokens.cache_read",
                 description="Cache read tokens (future-ready)",
                 unit="tokens",
             )
 
             # API tracking
             self.api_requests = self.meter.create_counter(
-                "agentproxy.api.requests",
+                "sf.api.requests",
                 description="API requests by provider and model",
                 unit="1",
             )
             self.api_errors = self.meter.create_counter(
-                "agentproxy.api.errors",
+                "sf.api.errors",
                 description="API errors by provider and type",
                 unit="1",
             )
             self.api_cost = self.meter.create_counter(
-                "agentproxy.api.cost",
+                "sf.api.cost",
                 description="Estimated API cost in USD",
                 unit="usd",
             )
 
             # Context window tracking
             self.context_window_usage = self.meter.create_histogram(
-                "agentproxy.context_window.usage_percent",
+                "sf.context_window.usage_percent",
                 description="Context window usage as percentage of model limit",
                 unit="%",
             )
 
             # Code change tracking
             self.code_lines_added = self.meter.create_counter(
-                "agentproxy.code.lines_added",
+                "sf.code.lines_added",
                 description="Lines of code added",
                 unit="lines",
             )
             self.code_lines_removed = self.meter.create_counter(
-                "agentproxy.code.lines_removed",
+                "sf.code.lines_removed",
                 description="Lines of code removed",
                 unit="lines",
             )
             self.code_files_modified = self.meter.create_counter(
-                "agentproxy.code.files_modified",
+                "sf.code.files_modified",
                 description="Files modified count",
                 unit="1",
             )
@@ -342,7 +336,7 @@ def calculate_cost(api: str, model: str, prompt_tokens: int, completion_tokens: 
 
 
 # Global singleton
-_telemetry: Optional[AgentProxyTelemetry] = None
+_telemetry: Optional[SFTelemetry] = None
 
 
 def get_telemetry():
@@ -354,13 +348,13 @@ def get_telemetry():
         if _telemetry is None:
             _telemetry = NoOpTelemetry()
             # Only print if telemetry was requested
-            if os.getenv("AGENTPROXY_ENABLE_TELEMETRY", "0") == "1":
+            if os.getenv("SF_ENABLE_TELEMETRY", "0") == "1":
                 print("\033[2m│ 📊 OTEL     │\033[0m \033[91mOTEL packages not installed\033[0m")
                 print("\033[2m│ 📊 OTEL     │\033[0m Install: pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc")
         return _telemetry
 
     if _telemetry is None:
-        _telemetry = AgentProxyTelemetry()
+        _telemetry = SFTelemetry()
     return _telemetry
 
 

@@ -13,7 +13,7 @@ Test categories:
 import pytest
 from pydantic import ValidationError
 
-from agentproxy.event_processors.tool_use import (
+from sf.event_processors.tool_use import (
     ALLOWED_LABEL_KEYS,
     BASH_COMMAND_MATCHERS,
     BaseToolUseEventProcessor,
