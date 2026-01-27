@@ -75,6 +75,8 @@ class TaskRequest(BaseModel):
     mission: Optional[str] = None
     max_iterations: int = 100
     screenshots: Optional[list[ScreenshotInput]] = None
+    context_type: str = "auto"
+    repo_url: str = ""
 
 
 class SessionResponse(BaseModel):
@@ -119,6 +121,8 @@ async def stream_task(
     mission: Optional[str],
     max_iterations: int,
     screenshots: Optional[list[ScreenshotInput]] = None,
+    context_type: str = "auto",
+    repo_url: str = "",
 ) -> AsyncGenerator[str, None]:
     """
     Stream task execution as SSE events.
@@ -141,6 +145,8 @@ async def stream_task(
                 session_id=session_id,
                 user_mission=mission,
                 claude_bin=os.getenv("CLAUDE_BIN"),
+                context_type=context_type,
+                repo_url=repo_url,
             )
             
             # Attach screenshots if provided
@@ -231,6 +237,8 @@ async def start_task(request: TaskRequest):
             mission=request.mission,
             max_iterations=request.max_iterations,
             screenshots=request.screenshots,
+            context_type=request.context_type,
+            repo_url=request.repo_url,
         ),
         media_type="text/event-stream",
         headers={

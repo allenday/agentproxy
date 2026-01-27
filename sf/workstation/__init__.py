@@ -7,7 +7,10 @@ A Workstation HAS-A Fixture (VCS strategy) and lifecycle hooks.
 """
 
 from .workstation import Workstation, WorkstationState, WorkstationHook
-from .fixtures import Fixture, LocalDirFixture, GitRepoFixture, GitWorktreeFixture
+from .fixtures import (
+    Fixture, LocalDirFixture, GitRepoFixture, GitWorktreeFixture, GitCloneFixture,
+)
+from .quality_gate import QualityGate, VerificationGate, HumanApprovalGate, InspectionResult
 
 __all__ = [
     "Workstation",
@@ -17,6 +20,11 @@ __all__ = [
     "LocalDirFixture",
     "GitRepoFixture",
     "GitWorktreeFixture",
+    "GitCloneFixture",
+    "QualityGate",
+    "VerificationGate",
+    "HumanApprovalGate",
+    "InspectionResult",
     "create_workstation",
 ]
 
@@ -64,7 +72,12 @@ def create_workstation(
             except (subprocess.SubprocessError, FileNotFoundError):
                 context_type = "local"
 
-    if context_type == "git":
+    if context_type == "clone" and repo_url:
+        fixture = GitCloneFixture(
+            repo_url=repo_url,
+            clone_path=working_dir,
+        )
+    elif context_type == "git":
         fixture = GitRepoFixture(path=working_dir)
     else:
         fixture = LocalDirFixture(path=working_dir)

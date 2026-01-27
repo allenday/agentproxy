@@ -124,6 +124,19 @@ Examples:
         )
 
         parser.add_argument(
+            "--context-type",
+            choices=["auto", "local", "git", "clone"],
+            default="auto",
+            help="Workstation fixture type (default: auto-detect)"
+        )
+
+        parser.add_argument(
+            "--repo-url",
+            metavar="URL",
+            help="Git repo URL for clone-based workstations (requires --context-type clone)"
+        )
+
+        parser.add_argument(
             "--claude-bin",
             metavar="PATH",
             default=os.getenv("CLAUDE_BIN"),
@@ -433,6 +446,8 @@ Examples:
                 auto_qa=not args.no_qa,
                 context_dir=context_dir,
                 claude_bin=args.claude_bin,
+                context_type=args.context_type,
+                repo_url=args.repo_url or "",
             )
             
             # Attach screenshots if provided (--screenshot with description)

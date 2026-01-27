@@ -73,6 +73,8 @@ class PA:
         context_dir: Optional[str] = None,
         claude_bin: Optional[str] = None,
         workstation: Optional[Workstation] = None,
+        context_type: str = "auto",
+        repo_url: str = "",
     ) -> None:
         self.working_dir = working_dir
         self.auto_verify = auto_verify
@@ -80,7 +82,9 @@ class PA:
         self.claude_bin = claude_bin or "claude"
 
         # Workstation: isolated execution environment with VCS management
-        self._workstation = workstation or create_workstation(working_dir)
+        self._workstation = workstation or create_workstation(
+            working_dir, context_type=context_type, repo_url=repo_url,
+        )
 
         self.agent = PAAgent(working_dir, session_id, user_mission, context_dir)
         self._display = create_display(display_mode)
