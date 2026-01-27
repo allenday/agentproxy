@@ -680,31 +680,32 @@ Based on current progress, provide your REASONING and FUNCTION_CALL in JSON form
         if not self._gemini:
             return f"# Task: {task}\n\n- [ ] Complete the task"
         
-        breakdown_prompt = f"""Break down this coding task into a SUGGESTED APPROACH.
+        breakdown_prompt = f"""Break down this coding task into numbered work orders.
 
 TASK: {task}
 
 RULES:
-- Create only 2-4 suggested steps
-- Each step is a suggested milestone, NOT a requirement
-- Steps should be coarse suggestions, NOT detailed specifications
+- Create 2-6 work orders (numbered steps)
+- Each step is a self-contained unit of work
+- Add (depends: N) annotations where step N must complete first
+- Steps WITHOUT dependencies can execute in parallel
 - DO NOT add requirements that aren't in the original task
-- DO NOT specify implementation details like file names unless the task explicitly requires them
 
-FORMAT:
-## Goal
-[Restate the original task in one sentence]
+FORMAT (use exactly this format):
+1. First step description
+2. Second step description (depends: 1)
+3. Third step — can run in parallel with step 2 (depends: 1)
+4. Final integration step (depends: 2, 3)
 
-## Suggested Approach
-- [ ] Step 1: [Suggested milestone]
-- [ ] Step 2: [Suggested milestone]
+EXAMPLE:
+1. Set up project structure and dependencies
+2. Implement core data models (depends: 1)
+3. Implement API endpoints (depends: 1)
+4. Add tests and wire everything together (depends: 2, 3)"""
 
-## Success Criteria
-[What would prove the ORIGINAL TASK is complete - nothing more, nothing less]"""
-        
         try:
             return self._gemini.call(
-                system_prompt="You are a senior tech lead. Create coarse, high-level task milestones.",
+                system_prompt="You are a senior tech lead. Create numbered work orders with dependency annotations.",
                 user_prompt=breakdown_prompt
             )
         except Exception:

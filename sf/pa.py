@@ -414,7 +414,7 @@ class PA:
                 span.end()
             raise
     
-    def _stream_claude(self, instruction: str, iteration: int = 0) -> Generator[OutputEvent, None, None]:
+    def _stream_claude(self, instruction: str, iteration: int = 0, working_dir: Optional[str] = None) -> Generator[OutputEvent, None, None]:
         telemetry = get_telemetry()
         self._file_tracker.reset()
 
@@ -443,7 +443,7 @@ class PA:
 
             process = subprocess.Popen(
                 [self.claude_bin, "-p", instruction, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=self.working_dir,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=working_dir or self.working_dir,
                 env=env,  # Pass OTEL env vars and session linking to Claude
                 bufsize=1  # Line-buffered for faster output
             )
