@@ -26,6 +26,8 @@ from .pa_agent import PAAgent
 from .pa_memory import PAMemory
 from .telemetry import get_telemetry
 from .workstation import Workstation, create_workstation
+from .plugin_manager import PluginManager
+from .plugins.base import PluginHookPhase
 
 
 class PADecision(str, Enum):
@@ -94,6 +96,10 @@ class PA:
         self._claude_output_buffer: List[str] = []
         self._session_files_changed: List[str] = []
         self._previous_summary = self.agent.load_session_summary()
+
+        # Plugin system
+        self._plugin_manager = PluginManager()
+        self._plugin_manager.initialize_plugins(self)
 
         # Track the original task and last valid instruction for error recovery
         self._original_task: str = ""
@@ -229,6 +235,19 @@ class PA:
             self._state = ControllerState.PROCESSING
             self._session_files_changed = []
 
+            # Plugin hook: ON_TASK_START
+            plugin_results = self._plugin_manager.trigger_hook(
+                PluginHookPhase.ON_TASK_START,
+                task=task,
+                working_dir=self.working_dir,
+                session_id=self.session_id,
+            )
+            blocked, block_msg = self._plugin_manager.check_blocked(plugin_results)
+            if blocked:
+                yield self._emit(f"[PA] Task blocked by plugin: {block_msg}", EventType.ERROR, source="pa")
+                self._state = ControllerState.ERROR
+                return
+
             # Commission workstation (replaces _ensure_git_repo)
             try:
                 self._workstation.commission()
@@ -313,6 +332,14 @@ class PA:
 
                 reasoning, result = self.agent.run_iteration(context_with_verification)
 
+                # Plugin hook: ON_PA_DECISION
+                self._plugin_manager.trigger_hook(
+                    PluginHookPhase.ON_PA_DECISION,
+                    decision=reasoning.decision,
+                    function=result.name.value,
+                    iteration=iteration,
+                )
+
                 # Show PA's thinking process
                 thinking_output = f"State: {reasoning.current_state}\nProgress: {reasoning.claude_progress}\nDecision: {reasoning.decision}"
                 yield self._emit(thinking_output, EventType.THINKING, source="pa-thinking")
@@ -354,13 +381,22 @@ class PA:
             summary = self.agent.generate_session_summary(task, self._claude_output_buffer, all_files)
             self.agent.save_session_summary(summary)
 
+            status = "completed" if self.agent.is_done else "max_iterations"
+
+            # Plugin hook: ON_TASK_COMPLETE
+            self._plugin_manager.trigger_hook(
+                PluginHookPhase.ON_TASK_COMPLETE,
+                task=task,
+                status=status,
+                session_id=self.session_id,
+                files_changed=all_files,
+            )
+
             if self.agent.is_done:
                 yield self._emit("Task completed", EventType.COMPLETED)
-                status = "completed"
                 # State already set to DONE when MARK_DONE was called
             else:
                 yield self._emit("Max iterations reached", EventType.ERROR)
-                status = "max_iterations"
                 self._state = ControllerState.ERROR
 
             # Record OTEL completion
@@ -401,6 +437,13 @@ class PA:
             # State persists (DONE or ERROR) - use reset() to return to IDLE
 
         except Exception as e:
+            # Plugin hook: ON_TASK_ERROR
+            self._plugin_manager.trigger_hook(
+                PluginHookPhase.ON_TASK_ERROR,
+                task=self._original_task,
+                error=str(e),
+            )
+
             # Record OTEL error
             if span:
                 telemetry.active_sessions.add(-1)

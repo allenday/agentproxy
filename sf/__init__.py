@@ -17,6 +17,8 @@ from .pa import PA, create_pa, list_sessions
 from .pa_memory import PAMemory, BestPractices, SessionContext, InteractionHistory
 from .process_manager import ClaudeProcessManager
 from .display import RealtimeDisplay
+from .plugin_manager import PluginManager
+from .plugins import SFPlugin, PluginHookPhase, PluginResult, PluginContext
 
 __all__ = [
     # Primary API
@@ -34,6 +36,12 @@ __all__ = [
     "OutputEvent",
     "EventType",
     "ControllerState",
+    # Plugin system
+    "PluginManager",
+    "SFPlugin",
+    "PluginHookPhase",
+    "PluginResult",
+    "PluginContext",
 ]
 
 __version__ = "0.2.0"
