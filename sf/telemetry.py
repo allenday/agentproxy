@@ -166,6 +166,7 @@ if OTEL_AVAILABLE:
 
                 # Initialize metrics
                 self._init_metrics()
+                self._init_factory_metrics()
                 print(f"\033[2m│ 📊 OTEL     │\033[0m Telemetry initialization complete ✓")
 
             except Exception as e:
@@ -311,6 +312,56 @@ if OTEL_AVAILABLE:
             self.code_files_modified = self.meter.create_counter(
                 "sf.code.files_modified",
                 description="Files modified count",
+                unit="1",
+            )
+
+        def _init_factory_metrics(self):
+            """Create Plane 1 (Factory Operations) metric instruments."""
+            if not self.meter:
+                return
+
+            # Work order counters
+            self.factory_work_orders = self.meter.create_counter(
+                "factory.work_orders.total",
+                description="Total work orders by source and status",
+                unit="1",
+            )
+            self.factory_cycle_time = self.meter.create_histogram(
+                "factory.cycle_time",
+                description="End-to-end production cycle time",
+                unit="s",
+            )
+
+            # Workstation metrics (SMED)
+            self.workstation_setup_time = self.meter.create_histogram(
+                "workstation.setup_time",
+                description="Workstation commission time (changeover/SMED)",
+                unit="s",
+            )
+            self.workstation_production_time = self.meter.create_histogram(
+                "workstation.production_time",
+                description="Workstation active production time",
+                unit="s",
+            )
+
+            # Work order timing
+            self.work_order_lead_time = self.meter.create_histogram(
+                "work_order.lead_time",
+                description="Work order lead time (created to completed)",
+                unit="s",
+            )
+
+            # Assembly metrics
+            self.assembly_integrations = self.meter.create_counter(
+                "assembly.integrations",
+                description="Assembly integration attempts by status",
+                unit="1",
+            )
+
+            # Quality gate metrics
+            self.quality_gate_inspections = self.meter.create_counter(
+                "quality_gate.inspections",
+                description="Quality gate inspections by gate and result",
                 unit="1",
             )
 

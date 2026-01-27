@@ -6,6 +6,7 @@ The isolated execution environment. HAS-A Fixture, HAS hooks.
 Manages lifecycle: commission → produce → checkpoint → decommission.
 """
 
+import time
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -67,12 +68,29 @@ class Workstation:
         """Set up the workstation. Returns working directory path.
 
         Calls pre_commission hooks, then fixture.setup().
+        Records setup_time metric for SMED tracking.
         """
+        start_time = time.time()
         self.state = WorkstationState.COMMISSIONING
         for hook in self.hooks:
             hook.pre_commission(self)
         path = self.fixture.setup()
         self.state = WorkstationState.READY
+
+        # Record OTEL workstation setup time
+        try:
+            from ..telemetry import get_telemetry
+            telemetry = get_telemetry()
+            if telemetry.enabled and telemetry.tracer:
+                duration = time.time() - start_time
+                if hasattr(telemetry, "workstation_setup_time"):
+                    fixture_type = self.fixture.serialize().get("type", "unknown")
+                    telemetry.workstation_setup_time.record(
+                        duration, {"fixture_type": fixture_type},
+                    )
+        except Exception:
+            pass  # Telemetry should never break workstation lifecycle
+
         return path
 
     def decommission(self) -> None:

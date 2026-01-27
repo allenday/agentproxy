@@ -16,6 +16,7 @@ import time
 from typing import Any, Dict, Generator, List, Optional
 
 from ..models import EventType, OutputEvent
+from ..telemetry import get_telemetry
 from ..workstation.workstation import Workstation
 from .assembly import AssemblyStation, IntegrationResult, IntegrationStatus
 from .models import WorkOrder, WorkOrderResult, WorkOrderStatus
@@ -61,6 +62,20 @@ class ShopFloor:
         Yields:
             OutputEvent stream.
         """
+        telemetry = get_telemetry()
+        production_start = time.time()
+
+        # Start OTEL span for production
+        span = None
+        if telemetry.enabled and telemetry.tracer:
+            span = telemetry.tracer.start_span(
+                "shopfloor.production",
+                attributes={
+                    "shopfloor.task": task[:200],
+                    "shopfloor.max_iterations": max_iterations,
+                },
+            )
+
         # 1. Bill of Materials: parse breakdown into work orders
         bom = parse_work_orders(breakdown_text)
         if not bom:
@@ -86,8 +101,26 @@ class ShopFloor:
             indices = [wo.index for wo in layer]
             yield self._emit(f"  Layer {i+1}: WO-{indices}")
 
+        # Record work orders
+        if telemetry.enabled and hasattr(telemetry, "factory_work_orders"):
+            for wo in bom:
+                telemetry.factory_work_orders.add(1, {
+                    "source": wo.source,
+                    "status": "created",
+                })
+
         # 3. Execute layers
         yield from self._execute_layers(layers, max_iterations)
+
+        # Record cycle time
+        cycle_time = time.time() - production_start
+        if telemetry.enabled and hasattr(telemetry, "factory_cycle_time"):
+            telemetry.factory_cycle_time.record(cycle_time)
+        if span:
+            span.set_attribute("shopfloor.cycle_time_s", cycle_time)
+            span.set_attribute("shopfloor.work_order_count", len(bom))
+            span.set_attribute("shopfloor.layer_count", len(layers))
+            span.end()
 
     def _execute_layers(
         self,
@@ -188,11 +221,33 @@ class ShopFloor:
                     context_summaries.append(r.summary)
 
             # Quality gate between layers
+            telemetry = get_telemetry()
             for gate in self.quality_gates:
                 for wo_result in completed_results[-len(layer):]:
+                    gate_span = None
+                    if telemetry.enabled and telemetry.tracer:
+                        gate_span = telemetry.tracer.start_span(
+                            "quality_gate.inspection",
+                            attributes={
+                                "quality_gate.type": type(gate).__name__,
+                                "quality_gate.layer": layer_idx + 1,
+                            },
+                        )
+
                     inspection = gate.inspect(
                         layer[0], wo_result, parent_station,
                     )
+
+                    if telemetry.enabled and hasattr(telemetry, "quality_gate_inspections"):
+                        telemetry.quality_gate_inspections.add(1, {
+                            "gate_name": type(gate).__name__,
+                            "passed": str(inspection.passed).lower(),
+                        })
+                    if gate_span:
+                        gate_span.set_attribute("quality_gate.passed", inspection.passed)
+                        gate_span.set_attribute("quality_gate.details", inspection.details[:200])
+                        gate_span.end()
+
                     if not inspection.passed:
                         yield self._emit(
                             f"[QualityGate] FAILED: {inspection.details}",
@@ -229,6 +284,18 @@ class ShopFloor:
         """
         wo.status = WorkOrderStatus.IN_PROGRESS
         start_time = time.time()
+
+        telemetry = get_telemetry()
+        wo_span = None
+        if telemetry.enabled and telemetry.tracer:
+            wo_span = telemetry.tracer.start_span(
+                "workstation.produce",
+                attributes={
+                    "work_order.index": wo.index,
+                    "work_order.source": wo.source,
+                    "work_order.prompt": wo.prompt[:200],
+                },
+            )
 
         # Build enriched prompt with context
         prompt = wo.prompt
@@ -271,6 +338,15 @@ class ShopFloor:
 
             yield self._emit(f"[WO-{wo.index}] {summary}")
 
+            # Record OTEL
+            if telemetry.enabled and hasattr(telemetry, "workstation_production_time"):
+                telemetry.workstation_production_time.record(duration)
+                telemetry.work_order_lead_time.record(duration, {"source": wo.source})
+            if wo_span:
+                wo_span.set_attribute("work_order.status", "completed")
+                wo_span.set_attribute("work_order.duration_s", duration)
+                wo_span.end()
+
             return WorkOrderResult(
                 status="completed",
                 events=events,
@@ -287,6 +363,13 @@ class ShopFloor:
                 f"[WO-{wo.index}] FAILED: {e}",
                 event_type=EventType.ERROR,
             )
+
+            # Record OTEL
+            if wo_span:
+                wo_span.set_attribute("work_order.status", "failed")
+                wo_span.set_attribute("work_order.error", str(e)[:200])
+                wo_span.end()
+
             return WorkOrderResult(
                 status="failed",
                 events=events,
