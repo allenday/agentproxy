@@ -70,8 +70,10 @@ class GitWorktreeFixture(Fixture):
         """Create a nested worktree from this worktree.
 
         Uses the same parent repo's object store.
+        Branch naming uses '-' separator to avoid git ref path conflicts
+        (git cannot have both refs/heads/sf/X and refs/heads/sf/X/Y).
         """
-        branch_name = f"{self._branch}/{name}"
+        branch_name = f"{self._branch}-{name}"
         nested_path = os.path.join(
             os.path.dirname(self._worktree_path),
             f".sf-worktree-{name}",
