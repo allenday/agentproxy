@@ -1,0 +1,16 @@
+# Test dependencies for agentproxy
+
+# Core test framework
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-timeout>=2.1.0
+
+# For integration tests
+requests>=2.31.0
+
+# For mocking (if needed)
+pytest-mock>=3.11.1
+
+# Optional: pytest plugins
+# pytest-xdist>=3.3.1  # Parallel test execution
+# pytest-benchmark>=4.0.0  # Performance benchmarking

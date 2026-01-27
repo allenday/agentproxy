@@ -80,16 +80,26 @@ class EventType(Enum):
 
 
 class ControllerState(Enum):
-    """States of the Claude Code Controller."""
+    """
+    States of the Claude Code Controller.
 
-    IDLE = auto()           # Not running
+    State Machine (for PA orchestrator):
+        IDLE → PROCESSING → {DONE, ERROR, STOPPED}
+        {DONE, ERROR, STOPPED} → IDLE (via reset())
+
+    Additional states for interactive mode:
+        STARTING, READY, WAITING_CONFIRM, STOPPING
+    """
+
+    IDLE = auto()           # Not running, ready for work
     STARTING = auto()       # Process starting up
     READY = auto()          # Waiting for input
     PROCESSING = auto()     # Executing a task
     WAITING_CONFIRM = auto() # Waiting for user confirmation
-    STOPPING = auto()       # Shutting down
-    DONE = auto()           # Task completed successfully
-    ERROR = auto()          # Error state
+    STOPPING = auto()       # Shutting down (transitional)
+    DONE = auto()           # Task completed successfully (terminal)
+    ERROR = auto()          # Task failed (terminal)
+    STOPPED = auto()        # User interrupted (terminal)
 
 
 @dataclass

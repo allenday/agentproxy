@@ -10,6 +10,7 @@ After each Claude iteration, PA thinks holistically and decides:
 """
 
 import json
+import socket
 import subprocess
 import time
 from enum import Enum
@@ -19,6 +20,7 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 from .display import create_display
 from .file_tracker import FileChangeTracker
 from .function_executor import FunctionName, FunctionResult
+from .event_processors import process_tool_event
 from .models import ControllerState, EventType, OutputEvent
 from .pa_agent import PAAgent
 from .pa_memory import PAMemory
@@ -34,8 +36,31 @@ class PADecision(str, Enum):
 
 
 class PA:
-    """PA Orchestrator - runs Claude Code with PA supervision."""
-    
+    """
+    PA Orchestrator - runs Claude Code with PA supervision.
+
+    State Machine (enables supervisor/worker composition):
+        IDLE ------> PROCESSING ------> DONE
+          ^              |                |
+          |              v                |
+          |            ERROR              |
+          |              |                |
+          |              v                |
+          +----------STOPPED <------------+
+                       |
+                    reset()
+
+    Valid transitions:
+        - IDLE → PROCESSING (via run_task())
+        - PROCESSING → DONE (task completes successfully)
+        - PROCESSING → ERROR (task fails or max iterations)
+        - PROCESSING → STOPPED (user calls stop())
+        - {DONE, ERROR, STOPPED} → IDLE (via reset())
+
+    Terminal states (DONE, ERROR, STOPPED) persist until explicit reset(),
+    enabling external observers (e.g., supervisor PA) to check completion status.
+    """
+
     def __init__(
         self,
         working_dir: str = ".",
@@ -68,30 +93,161 @@ class PA:
     @property
     def memory(self) -> PAMemory:
         return self.agent.memory
-    
+
     @property
     def session_id(self) -> str:
         return self.agent.memory.session.session_id
-    
+
+    @property
+    def state(self) -> ControllerState:
+        """Current execution state. Terminal states persist until reset()."""
+        return self._state
+
     def stop(self) -> None:
+        """Stop the current task execution."""
+        self._state = ControllerState.STOPPED
+
+    def reset(self) -> None:
+        """
+        Reset PA to IDLE state for reuse.
+
+        State Machine:
+            IDLE → PROCESSING (via run_task)
+            PROCESSING → DONE | ERROR | STOPPED (task completes/fails/interrupted)
+            {DONE, ERROR, STOPPED} → IDLE (via reset)
+
+        This enables PA reuse in supervisor/worker hierarchies where a parent
+        PA may spawn child PA instances and check their completion status.
+        """
         self._state = ControllerState.IDLE
-    
+        self._claude_output_buffer = []
+        self._session_files_changed = []
+
+    def _get_subprocess_env_with_trace_context(self) -> Dict[str, str]:
+        """
+        Get environment for Claude subprocess with session-specific OTEL metadata.
+
+        OTEL config (endpoints, protocols, exporters) is inherited from parent env.
+        We only add session-specific resource attributes for linking PA ↔ Claude.
+        """
+        import os
+        telemetry = get_telemetry()
+        env = os.environ.copy()
+
+        # Enable Claude's telemetry and set service name
+        env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+        env["OTEL_SERVICE_NAME"] = "claude-code"
+
+        # Session-specific resource attributes for linking
+        user_id = os.getenv("AGENTPROXY_OWNER_ID", os.getenv("USER", "unknown"))
+        project_id = os.getenv("AGENTPROXY_PROJECT_ID", "default")
+        namespace = os.getenv("OTEL_SERVICE_NAMESPACE", f"{user_id}.{project_id}")
+
+        resource_attrs = [
+            f"service.name=claude-code",
+            f"service.namespace={namespace}",
+            f"host.name={os.getenv('HOSTNAME', socket.gethostname())}",
+            f"agentproxy.owner={user_id}",
+            f"agentproxy.project_id={project_id}",
+            f"agentproxy.role=worker",
+            f"agentproxy.master_session_id={self.session_id}",
+        ]
+        env["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(resource_attrs)
+
+        telemetry.log(f"Claude env: master_session_id={self.session_id[:8]}...")
+
+        return env
+
+    def _ensure_git_repo(self) -> None:
+        """
+        Ensure working directory is a git repo with a baseline commit.
+
+        This enables reliable LOC tracking via `git diff --numstat HEAD`
+        even when the user's -d target isn't already a git repo.
+        Future: supports git worktree for parallel workers.
+        """
+        import os
+        git_dir = os.path.join(self.working_dir, ".git")
+        if os.path.exists(git_dir):
+            return  # Already a git repo
+
+        telemetry = get_telemetry()
+
+        try:
+            os.makedirs(self.working_dir, exist_ok=True)
+            subprocess.run(
+                ["git", "init"],
+                cwd=self.working_dir, capture_output=True, timeout=5,
+            )
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=self.working_dir, capture_output=True, timeout=5,
+            )
+            subprocess.run(
+                ["git", "commit", "--allow-empty", "-m", "baseline"],
+                cwd=self.working_dir, capture_output=True, timeout=5,
+            )
+            if telemetry.enabled:
+                telemetry.log("Pre-work: initialized git repo for LOC tracking")
+        except Exception as e:
+            # Non-fatal: LOC tracking degrades gracefully to (0, 0)
+            if telemetry.enabled:
+                telemetry.log(f"Pre-work: git init failed ({e}), LOC tracking unavailable")
+
+    def _process_tool_enrichments(self, event_data: Dict[str, Any]) -> None:
+        """
+        Run tool adapters on Claude's stream-json events for enriched telemetry.
+
+        Extracts tool_use items from assistant messages and passes them through
+        the appropriate adapter (Bash → git detection, Write → file metadata, etc.)
+        """
+        if event_data.get("type") != "assistant":
+            return
+
+        telemetry = get_telemetry()
+        if not telemetry.enabled:
+            return
+
+        message = event_data.get("message", {})
+        for item in message.get("content", []):
+            if not isinstance(item, dict) or item.get("type") != "tool_use":
+                continue
+
+            tool_name = item.get("name", "")
+            tool_input = item.get("input", {})
+            enrichment = process_tool_event(tool_name, tool_input)
+
+            if enrichment and enrichment.labels:
+                telemetry.tool_executions.add(1, {
+                    "tool_name": tool_name,
+                    "success": "true",
+                    **enrichment.labels,  # already validated by ToolEnrichment
+                })
+                if enrichment.tags:
+                    telemetry.log(f"Tool enrichment: {tool_name} tags={enrichment.tags}")
+
     def run_task(self, task: str, max_iterations: int = 100) -> Generator[OutputEvent, None, None]:
         """Execute a task with PA supervising Claude."""
         telemetry = get_telemetry()
 
         # Start OTEL span if enabled
         if telemetry.enabled and telemetry.tracer:
+            import os
             span = telemetry.tracer.start_span(
                 "pa.run_task",
                 attributes={
+                    "pa.session_id": self.session_id,
                     "pa.task.description": task[:100],  # Truncate for readability
                     "pa.working_dir": self.working_dir,
                     "pa.max_iterations": max_iterations,
+                    "pa.project_id": os.getenv("AGENTPROXY_PROJECT_ID", "default"),
                 }
             )
+            telemetry.log(f"Started span 'pa.run_task' (session={self.session_id[:8]})")
             telemetry.tasks_started.add(1)
+            telemetry.log(f"Metric: tasks_started +1")
             telemetry.active_sessions.add(1)
+            telemetry.log(f"Metric: active_sessions +1")
             task_start_time = time.time()
         else:
             span = None
@@ -99,6 +255,9 @@ class PA:
         try:
             self._state = ControllerState.PROCESSING
             self._session_files_changed = []
+
+            # Pre-work: ensure git repo for LOC tracking
+            self._ensure_git_repo()
 
             # Store original task for error recovery
             self._original_task = task
@@ -109,7 +268,7 @@ class PA:
             yield self._emit(f"[PA Self-Check]\n{status}", EventType.TEXT, source="pa")
             if not is_ready:
                 yield self._emit("[PA] Self-check failed - cannot proceed", EventType.ERROR, source="pa")
-                self._state = ControllerState.IDLE
+                self._state = ControllerState.ERROR
                 if span:
                     span.set_attribute("pa.status", "failed_self_check")
                     span.end()
@@ -139,7 +298,7 @@ class PA:
                 yield self._emit(current_instruction, EventType.TEXT, source="pa-to-claude")
 
                 claude_output_lines = []
-                for event in self._stream_claude(current_instruction):
+                for event in self._stream_claude(current_instruction, iteration=iteration):
                     yield event
                     if event.content:
                         claude_output_lines.append(event.content)
@@ -220,21 +379,48 @@ class PA:
             if self.agent.is_done:
                 yield self._emit("Task completed", EventType.COMPLETED)
                 status = "completed"
+                # State already set to DONE when MARK_DONE was called
             else:
                 yield self._emit("Max iterations reached", EventType.ERROR)
                 status = "max_iterations"
+                self._state = ControllerState.ERROR
 
             # Record OTEL completion
             if span:
                 duration = time.time() - task_start_time
                 telemetry.tasks_completed.add(1, {"status": status})
+                telemetry.log(f"Metric: tasks_completed +1 (status={status})")
                 telemetry.task_duration.record(duration)
+                telemetry.log(f"Metric: task_duration {duration:.2f}s")
                 span.set_attribute("pa.status", status)
                 span.set_attribute("pa.iterations", iteration + 1)
                 span.end()
+                telemetry.log(f"Ended span 'pa.run_task' ({iteration + 1} iterations, {duration:.2f}s)")
                 telemetry.active_sessions.add(-1)
+                telemetry.log(f"Metric: active_sessions -1")
 
-            self._state = ControllerState.IDLE
+                # Track code changes
+                if telemetry.enabled:
+                    lines_added, lines_removed = self._file_tracker.get_code_changes()
+                    if lines_added > 0:
+                        telemetry.code_lines_added.add(lines_added)
+                        telemetry.log(f"Metric: code_lines_added +{lines_added}")
+                    if lines_removed > 0:
+                        telemetry.code_lines_removed.add(lines_removed)
+                        telemetry.log(f"Metric: code_lines_removed +{lines_removed}")
+
+                    files_modified = len(self._file_tracker._changed_files)
+                    if files_modified > 0:
+                        telemetry.code_files_modified.add(files_modified)
+                        telemetry.log(f"Metric: code_files_modified +{files_modified}")
+
+                # Flush telemetry to ensure all data is exported immediately on task completion
+                # Even though we export every OTEL_TRACE_EXPORT_INTERVAL ms (default 1s),
+                # the last batch might still be queued, so we force flush on completion
+                from .telemetry import flush_telemetry
+                flush_telemetry()
+
+            # State persists (DONE or ERROR) - use reset() to return to IDLE
 
         except Exception as e:
             # Record OTEL error
@@ -250,26 +436,37 @@ class PA:
                 span.end()
             raise
     
-    def _stream_claude(self, instruction: str) -> Generator[OutputEvent, None, None]:
+    def _stream_claude(self, instruction: str, iteration: int = 0) -> Generator[OutputEvent, None, None]:
         telemetry = get_telemetry()
         self._file_tracker.reset()
 
         # Start OTEL span for Claude subprocess if enabled
         if telemetry.enabled and telemetry.tracer:
+            import os
             claude_span = telemetry.tracer.start_span(
                 "claude.subprocess",
                 attributes={
                     "claude.prompt_length": len(instruction),
+                    "agentproxy.iteration": iteration,
+                    "agentproxy.master_session_id": self.session_id,
+                    "agentproxy.project_id": os.getenv("AGENTPROXY_PROJECT_ID", "default"),
                 }
             )
+            telemetry.log(f"Started span 'claude.subprocess' (iteration={iteration})")
             telemetry.claude_iterations.add(1)
+            telemetry.log(f"Metric: claude_iterations +1")
         else:
             claude_span = None
 
         try:
+            # Get environment with OTEL trace context and session linking
+            # This enables Claude Code's built-in telemetry and links it to PA's session
+            env = self._get_subprocess_env_with_trace_context()
+
             process = subprocess.Popen(
                 [self.claude_bin, "-p", instruction, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=self.working_dir,
+                env=env,  # Pass OTEL env vars and session linking to Claude
                 bufsize=1  # Line-buffered for faster output
             )
             # Use readline() for unbuffered, real-time output
@@ -283,6 +480,7 @@ class PA:
                 try:
                     data = json.loads(line)
                     self._file_tracker.process_event(data)
+                    self._process_tool_enrichments(data)
                     for event in self._parse_claude_event(data):
                         yield event
                 except json.JSONDecodeError:
@@ -293,6 +491,7 @@ class PA:
             if claude_span:
                 claude_span.set_attribute("claude.completed", True)
                 claude_span.end()
+                telemetry.log(f"Ended span 'claude.subprocess' (iteration={iteration})")
 
         except subprocess.TimeoutExpired:
             process.kill()
@@ -409,6 +608,13 @@ class PA:
     def _run_auto_verification(self, task: str, changed_files: List[str]) -> Generator[OutputEvent, None, None]:
         verify_result = self.agent.executor._verify_product({"product_type": "auto", "port": 3000})
         yield self._emit(f"[PA Verify] {verify_result.output[:300]}", EventType.TOOL_RESULT, source="pa")
+
+        # Record verification metric (bypasses execute() so we record here)
+        telemetry = get_telemetry()
+        if telemetry.enabled:
+            result_str = "pass" if verify_result.success else "fail"
+            telemetry.verifications.add(1, {"type": "verify_product", "result": result_str})
+            telemetry.log(f"Metric: verification ({result_str})")
         if not verify_result.success:
             self.agent.executor._claude_queue.put({"type": "instruction", "instruction": f"Fix: {verify_result.output}", "context": "verify"})
         elif self.auto_qa:

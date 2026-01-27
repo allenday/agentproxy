@@ -17,12 +17,13 @@ from .gemini_client import GeminiClient
 from .telemetry import get_telemetry
 
 # Load .env from project root (go up from agentproxy/ to project root)
+# Override=True ensures .env values take precedence over shell environment
 _env_path = Path(__file__).parent.parent / ".env"
 if _env_path.exists():
-    load_dotenv(_env_path)
+    load_dotenv(_env_path, override=True)
 else:
     # Try current working directory as fallback
-    load_dotenv()
+    load_dotenv(override=True)
 from .function_executor import (
     FunctionExecutor,
     FunctionCall,
@@ -90,19 +91,22 @@ You must output:
 - Be SKEPTICAL of Claude's claims - verify with actual execution
 - Use SEND_TO_CLAUDE to guide Claude's next action
 - Use VERIFY_CODE / RUN_TESTS before marking done
-- Only MARK_DONE when ALL requirements are verified working
+- MARK_DONE immediately when verification passes (don't over-verify)
 
 ## CRITICAL: WHAT "DONE" MEANS
 - **The CURRENT TASK (user's original request) is the ONLY requirement**
 - The TASK BREAKDOWN is just a suggested approach - NOT additional requirements
-- When verification succeeds, ask: "Does this satisfy the ORIGINAL TASK?"
-  - If YES → Call MARK_DONE immediately
+- When verification succeeds (script runs without errors), ask: "Does this satisfy the ORIGINAL TASK?"
+  - If YES → Call MARK_DONE immediately (don't do additional testing/review)
   - If NO → Continue work
 - Examples:
   - Task: "create hello world script" + Verification: script runs & prints "Hello, World!" → DONE
-  - Task: "add login page" + Breakdown says "add validation" but task didn't → Still DONE if page works
+  - Task: "create fibonacci with recursive/iterative" + Verification: script runs successfully → DONE (don't test both algorithms)
+  - Task: "add login page" + Verification: page loads → DONE (don't test edge cases unless task asked for it)
 - **Don't add requirements that weren't in the original task**
 - **Don't keep iterating on hallucinated details from the breakdown**
+- **Don't do "comprehensive verification" unless the task explicitly asks for it**
+- **STOP after first successful verification - don't read files to "review changes"**
 
 - NEVER request human input - YOU are the human proxy
 - If Claude asks questions, answer them based on the mission/task context
@@ -365,7 +369,7 @@ You must output:
             if reasoning_span:
                 duration = time.time() - start_time
                 telemetry.pa_reasoning_duration.record(duration)
-                telemetry.pa_decisions.add(1, {"decision": output.reasoning.decision})
+                telemetry.pa_decisions.add(1, {"function": output.function_call.name.value})
                 reasoning_span.set_attribute("pa.decision", output.reasoning.decision)
                 reasoning_span.set_attribute("pa.function", output.function_call.name.value)
                 reasoning_span.end()

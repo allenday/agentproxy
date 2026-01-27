@@ -186,6 +186,7 @@ class GeminiClient:
                     "gemini.attempt": attempt + 1,
                 }
             )
+            telemetry.log(f"Started span 'gemini.api.call' (attempt={attempt + 1}, images={len(image_paths) if image_paths else 0})")
             start_time = time.time()
         else:
             gemini_span = None
@@ -267,17 +268,63 @@ class GeminiClient:
 
                 response_text = str(text)
 
+                # Extract token usage metadata if available
+                usage_metadata = result.get("usageMetadata", {})
+                prompt_tokens = usage_metadata.get("promptTokenCount", 0)
+                completion_tokens = usage_metadata.get("candidatesTokenCount", 0)
+                total_tokens = usage_metadata.get("totalTokenCount", 0)
+
                 # Record OTEL metrics
                 if gemini_span:
                     duration = time.time() - start_time
                     telemetry.gemini_api_duration.record(duration)
+                    telemetry.log(f"Metric: gemini_api_duration {duration:.2f}s")
                     gemini_span.set_attribute("gemini.response_length", len(response_text))
                     gemini_span.set_attribute("gemini.success", True)
+
+                    # Add token usage to span attributes
+                    if total_tokens > 0:
+                        gemini_span.set_attribute("gemini.tokens.prompt", prompt_tokens)
+                        gemini_span.set_attribute("gemini.tokens.completion", completion_tokens)
+                        gemini_span.set_attribute("gemini.tokens.total", total_tokens)
+
+                        # Record detailed token & cost metrics
+                        model_name = "gemini-2.5-flash"  # Extract from self if configurable later
+
+                        # Record API request
+                        telemetry.api_requests.add(1, {"api": "gemini", "model": model_name})
+
+                        # Record token breakdown
+                        telemetry.tokens_prompt.add(prompt_tokens, {"api": "gemini", "model": model_name})
+                        telemetry.tokens_completion.add(completion_tokens, {"api": "gemini", "model": model_name})
+
+                        # Calculate and record cost
+                        from .telemetry import calculate_cost
+                        cost = calculate_cost("gemini", model_name, prompt_tokens, completion_tokens)
+                        telemetry.api_cost.add(cost, {"api": "gemini", "model": model_name})
+
+                        # Context window usage
+                        from .telemetry import MODEL_CONTEXT_LIMITS
+                        context_limit = MODEL_CONTEXT_LIMITS.get(model_name, 1_000_000)
+                        usage_percent = (prompt_tokens / context_limit) * 100
+                        telemetry.context_window_usage.record(usage_percent, {"model": model_name})
+
+                        # Keep backward compatible total
+                        telemetry.tokens_consumed.add(total_tokens)
+                        telemetry.log(f"Metric: tokens_consumed +{total_tokens} (prompt={prompt_tokens}, completion={completion_tokens}, cost=${cost:.6f})")
+
                     gemini_span.end()
+                    telemetry.log(f"Ended span 'gemini.api.call' ({duration:.2f}s, {total_tokens} tokens)")
 
                 return response_text
 
         except urllib.error.HTTPError as e:
+            if telemetry.enabled:
+                telemetry.api_errors.add(1, {
+                    "api": "gemini",
+                    "error_type": "http",
+                    "status_code": str(e.code)
+                })
             if gemini_span:
                 try:
                     from opentelemetry import trace as otel_trace
@@ -294,6 +341,12 @@ class GeminiClient:
                 retryable=500 <= e.code < 600,  # Retry server errors, not client errors
             )
         except urllib.error.URLError as e:
+            if telemetry.enabled:
+                telemetry.api_errors.add(1, {
+                    "api": "gemini",
+                    "error_type": "network",
+                    "status_code": "none"
+                })
             if gemini_span:
                 try:
                     from opentelemetry import trace as otel_trace
@@ -308,6 +361,12 @@ class GeminiClient:
                 retryable=True,
             )
         except (json.JSONDecodeError, KeyError, IndexError) as e:
+            if telemetry.enabled:
+                telemetry.api_errors.add(1, {
+                    "api": "gemini",
+                    "error_type": "parse",
+                    "status_code": "none"
+                })
             if gemini_span:
                 try:
                     from opentelemetry import trace as otel_trace
@@ -322,6 +381,12 @@ class GeminiClient:
                 retryable=False,  # Parse errors usually indicate API format changes
             )
         except Exception as e:
+            if telemetry.enabled:
+                telemetry.api_errors.add(1, {
+                    "api": "gemini",
+                    "error_type": "unknown",
+                    "status_code": "none"
+                })
             if gemini_span:
                 try:
                     from opentelemetry import trace as otel_trace

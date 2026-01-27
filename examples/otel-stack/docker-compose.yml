@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # OTEL Collector
   otel-collector:
@@ -14,16 +12,15 @@ services:
     networks:
       - otel
 
-  # Tempo (traces)
-  tempo:
-    image: grafana/tempo:latest
-    command: ["-config.file=/etc/tempo.yaml"]
-    volumes:
-      - ./tempo.yaml:/etc/tempo.yaml
-      - tempo-data:/tmp/tempo
+  # Jaeger (traces)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
     ports:
-      - "3200:3200"   # Tempo HTTP
-      - "4317"        # OTLP gRPC (internal)
+      - "16686:16686"  # Jaeger UI
+      - "4317"         # OTLP gRPC receiver (internal)
+      - "14268:14268"  # Jaeger HTTP receiver
     networks:
       - otel
 
@@ -42,6 +39,15 @@ services:
     networks:
       - otel
 
+  # Loki (logs)
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - otel
+
   # Grafana (visualization)
   grafana:
     image: grafana/grafana:latest
@@ -57,12 +63,12 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
-      - tempo
+      - jaeger
+      - loki
     networks:
       - otel
 
 volumes:
-  tempo-data:
   prometheus-data:
   grafana-data:
 

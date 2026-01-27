@@ -455,6 +455,7 @@ Examples:
             print("\033[1m COLOR LEGEND \033[0m")
             print("\033[35m┃ Claude ┃ Claude subprocess output\033[0m")
             print("\033[36m│ PA     │ PA orchestration & reasoning\033[0m")
+            print("\033[2m│ 📊 OTEL│ OpenTelemetry status\033[0m")
             print("\033[93m■ Tool calls - function invocations\033[0m")
             print("\033[95m■ Tool results - execution output\033[0m")
             print("\033[96m■ PA thinking - analysis & decisions\033[0m")
@@ -477,6 +478,7 @@ Examples:
                     "pa":          "\033[36m│ PA          │\033[0m",  # Cyan
                     "pa-thinking": "\033[34m│ 💭 THINKING │\033[0m",  # Blue
                     "pa-to-claude": "\033[32m\033[1m│ PA → Claude │\033[0m",  # Green bold
+                    "telemetry":   "\033[2m│ 📊 OTEL     │\033[0m",  # Dim/grey
                 }
                 prefix = SOURCE_PREFIXES.get(source, SOURCE_PREFIXES["pa"])
                 
@@ -511,13 +513,14 @@ Examples:
 def main() -> int:
     """Main entry point."""
     # Load .env file if present (for telemetry and other config)
+    # Override=True ensures .env values take precedence over shell environment
     try:
         from dotenv import load_dotenv
         from pathlib import Path
         # Load from project root .env
         env_path = Path.cwd() / ".env"
         if env_path.exists():
-            load_dotenv(env_path)
+            load_dotenv(env_path, override=True)
     except ImportError:
         # python-dotenv not installed, skip
         pass
