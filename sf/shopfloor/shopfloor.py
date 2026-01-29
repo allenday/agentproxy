@@ -778,30 +778,9 @@ class ShopFloor:
         )
 
     def _codex_generate_work(self, wo: WorkOrder, station: Workstation, prompt: str, provider_name: str = "codex_api") -> List[str]:
-        """Use Codex provider to produce files. For codex_cli, run in-place and diff git; for API, use JSON files."""
+        """Use a provider that returns JSON {files: [{path, content}]} and apply to the workstation."""
         files_changed: List[str] = []
 
-        # codex_cli: let the CLI write to disk in the workstation path, then detect changed files
-        if provider_name == "codex_cli":
-            messages = f"Task: {prompt}\nWrite all code and tests to disk under the current working directory. Keep changes minimal and runnable."
-            cmd = ["codex", "exec", "--json", messages]
-            try:
-                subprocess.run(cmd, cwd=station.path, capture_output=True, text=True, timeout=300)
-            except Exception:
-                return []
-            # Detect changed files via git status
-            try:
-                proc = subprocess.run(["git", "status", "--porcelain"], cwd=station.path, capture_output=True, text=True, timeout=10)
-                for line in proc.stdout.splitlines():
-                    parts = line.strip().split()
-                    if len(parts) == 2:
-                        files_changed.append(parts[1])
-            except Exception:
-                pass
-            return files_changed
-
-        # API providers: expect JSON files
-        files = []
         try:
             provider = get_provider(provider_name)
             system_msg = (
@@ -816,11 +795,8 @@ class ShopFloor:
             ]
             request = LLMRequest(messages=messages, model=None, provider=provider_name)
             result = provider.generate(request)
-            try:
-                data = json.loads(result.text)
-                files = data.get("files", [])
-            except Exception:
-                files = []
+            data = json.loads(result.text)
+            files = data.get("files", []) if isinstance(data, dict) else []
         except Exception:
             files = []
 
