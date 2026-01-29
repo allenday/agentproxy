@@ -89,8 +89,26 @@ class CodexCLIProvider(LLMProvider):
                 timeout=120,
                 cwd=os.getcwd(),
             )
+            raw_out = proc.stdout or ""
             if proc.returncode != 0:
-                return LLMResult(text=proc.stderr or "codex cli error", provider=self.name)
-            return LLMResult(text=proc.stdout, provider=self.name)
+                return LLMResult(text=proc.stderr or raw_out or "codex cli error", provider=self.name)
+
+            last_text = ""
+            for line in raw_out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if obj.get("type") == "agent_message" and obj.get("text"):
+                        last_text = obj["text"]
+                    item = obj.get("item", {})
+                    if item and item.get("type") == "agent_message" and item.get("text"):
+                        last_text = item["text"]
+                except Exception:
+                    # ignore parse errors; keep raw
+                    pass
+
+            return LLMResult(text=last_text or raw_out, provider=self.name)
         except Exception as e:
             return LLMResult(text=str(e), provider=self.name)
