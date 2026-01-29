@@ -804,12 +804,14 @@ class ShopFloor:
             files = []
 
         if not files:
-            # Fallback minimal fib implementation
+            # Fallback minimal fib implementation with package inits
             files = [
                 {"path": "src/fibonacci/fib.py",
                  "content": "def fib_iter(n):\n    a,b=0,1\n    for _ in range(n): a,b=b,a+b\n    return a\n\ndef fib_rec(n):\n    return n if n<2 else fib_rec(n-1)+fib_rec(n-2)\n"},
                 {"path": "tests/test_fib.py",
                  "content": "from src.fibonacci.fib import fib_iter, fib_rec\n\ndef test_iter():\n    assert fib_iter(5)==5\n\ndef test_rec():\n    assert fib_rec(6)==8\n"},
+                {"path": "src/__init__.py", "content": ""},
+                {"path": "src/fibonacci/__init__.py", "content": ""},
             ]
 
         for fobj in files:
