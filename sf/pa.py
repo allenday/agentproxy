@@ -760,7 +760,7 @@ class PA:
     
     def _setup_task_breakdown(self, task: str) -> Generator[OutputEvent, None, None]:
         existing = self.agent.load_task_breakdown()
-        if not existing:
+        if (not existing) or (task and task.lower() not in existing.lower()):
             breakdown = self.agent.generate_task_breakdown(task)
             self.agent.save_task_breakdown(breakdown)
             yield self._emit("[PA] Task breakdown created", EventType.THINKING, source="pa-thinking")

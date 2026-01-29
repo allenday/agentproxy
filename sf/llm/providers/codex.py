@@ -94,6 +94,7 @@ class CodexCLIProvider(LLMProvider):
             if proc.returncode != 0:
                 return LLMResult(text=proc.stderr or raw_out or "codex cli error", provider=self.name)
 
+            candidate_json = None
             last_text = ""
             for line in raw_out.splitlines():
                 line = line.strip()
@@ -102,14 +103,30 @@ class CodexCLIProvider(LLMProvider):
                 try:
                     obj = json.loads(line)
                     if obj.get("type") == "agent_message" and obj.get("text"):
-                        last_text = obj["text"]
+                        txt = obj["text"]
+                        last_text = txt
+                        if ("files" in txt) or txt.strip().startswith("{"):
+                            try:
+                                parsed = json.loads(txt)
+                                if isinstance(parsed, dict) and "files" in parsed:
+                                    candidate_json = txt
+                            except Exception:
+                                pass
                     item = obj.get("item", {})
                     if item and item.get("type") == "agent_message" and item.get("text"):
-                        last_text = item["text"]
+                        txt = item["text"]
+                        last_text = txt
+                        if ("files" in txt) or txt.strip().startswith("{"):
+                            try:
+                                parsed = json.loads(txt)
+                                if isinstance(parsed, dict) and "files" in parsed:
+                                    candidate_json = txt
+                            except Exception:
+                                pass
                 except Exception:
                     # ignore parse errors; keep raw
                     pass
 
-            return LLMResult(text=last_text or raw_out, provider=self.name)
+            return LLMResult(text=candidate_json or last_text or raw_out, provider=self.name)
         except Exception as e:
             return LLMResult(text=str(e), provider=self.name)
