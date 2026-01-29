@@ -19,6 +19,7 @@ from .process_manager import ClaudeProcessManager
 from .display import RealtimeDisplay
 from .plugin_manager import PluginManager
 from .plugins import SFPlugin, PluginHookPhase, PluginResult, PluginContext
+from .llm import LLMProvider, get_provider, LLMRequest, LLMResult, LLMMessage, LLMToolCall
 
 __all__ = [
     # Primary API
@@ -42,6 +43,13 @@ __all__ = [
     "PluginHookPhase",
     "PluginResult",
     "PluginContext",
+    # LLM providers
+    "LLMProvider",
+    "get_provider",
+    "LLMRequest",
+    "LLMResult",
+    "LLMMessage",
+    "LLMToolCall",
 ]
 
 __version__ = "0.2.0"

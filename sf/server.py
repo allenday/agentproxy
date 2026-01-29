@@ -99,6 +99,22 @@ class StopRequest(BaseModel):
 # Track active PA instances by session
 active_sessions: dict[str, PA] = {}
 
+# Webhook → ShopFloor queue
+from .shopfloor.queue import WorkOrderQueue
+from .shopfloor.models import WorkOrder
+
+webhook_queue = WorkOrderQueue()
+_next_wo_index = 0
+_wo_index_lock = __import__("threading").Lock()
+
+
+def _next_index() -> int:
+    global _next_wo_index
+    with _wo_index_lock:
+        idx = _next_wo_index
+        _next_wo_index += 1
+        return idx
+
 
 # =============================================================================
 # SSE Streaming
@@ -287,6 +303,242 @@ async def health_check():
         "status": "healthy",
         "active_sessions": len(active_sessions),
     }
+
+
+# =============================================================================
+# Webhook Endpoints (Phase 5: External Work Order Sources)
+# =============================================================================
+
+class WebhookResponse(BaseModel):
+    """Response from webhook endpoints."""
+    accepted: bool
+    source_type: str
+    source_ref: Optional[str] = None
+    message: str = ""
+
+
+@app.post("/webhook/github")
+async def webhook_github(payload: dict):
+    """Receive GitHub webhook events (issues, PRs).
+
+    Configure in GitHub repo Settings > Webhooks:
+      URL: https://<host>/webhook/github
+      Content type: application/json
+      Events: Issues, Pull requests
+    """
+    from .sources.github_adapter import GitHubSourceAdapter
+
+    adapter = GitHubSourceAdapter()
+    event = adapter.parse_event(payload)
+
+    if event is None:
+        return WebhookResponse(
+            accepted=False,
+            source_type="github",
+            message="Event not actionable (ignored action/type)",
+        )
+
+    wo_params = adapter.to_work_order_params(event)
+    wo = WorkOrder(index=_next_index(), **wo_params)
+    webhook_queue.enqueue(wo)
+
+    # Record source metric
+    _record_source_event("github", accepted=True)
+
+    return WebhookResponse(
+        accepted=True,
+        source_type="github",
+        source_ref=event.source_ref,
+        message=f"WorkOrder created from {event.source_ref}: {event.title[:80]}",
+    )
+
+
+@app.post("/webhook/jira")
+async def webhook_jira(payload: dict):
+    """Receive Jira webhook events (issue created/updated).
+
+    Configure in Jira Settings > System > WebHooks:
+      URL: https://<host>/webhook/jira
+      Events: Issue created, Issue updated
+    """
+    from .sources.jira_adapter import JiraSourceAdapter
+
+    adapter = JiraSourceAdapter()
+    event = adapter.parse_event(payload)
+
+    if event is None:
+        return WebhookResponse(
+            accepted=False,
+            source_type="jira",
+            message="Event not actionable (ignored event type or status)",
+        )
+
+    wo_params = adapter.to_work_order_params(event)
+    wo = WorkOrder(index=_next_index(), **wo_params)
+    webhook_queue.enqueue(wo)
+
+    _record_source_event("jira", accepted=True)
+
+    return WebhookResponse(
+        accepted=True,
+        source_type="jira",
+        source_ref=event.source_ref,
+        message=f"WorkOrder created from {event.source_ref}: {event.title[:80]}",
+    )
+
+
+@app.post("/webhook/alert")
+async def webhook_alert(payload: dict):
+    """Receive Prometheus AlertManager webhook events.
+
+    Configure in AlertManager config:
+      receivers:
+        - name: sf
+          webhook_configs:
+            - url: https://<host>/webhook/alert
+    """
+    from .sources.alert_adapter import AlertSourceAdapter
+
+    adapter = AlertSourceAdapter()
+    event = adapter.parse_event(payload)
+
+    if event is None:
+        return WebhookResponse(
+            accepted=False,
+            source_type="telemetry",
+            message="No firing alerts in payload",
+        )
+
+    wo_params = adapter.to_work_order_params(event)
+    wo = WorkOrder(index=_next_index(), **wo_params)
+    webhook_queue.enqueue(wo)
+
+    _record_source_event("telemetry", accepted=True)
+
+    return WebhookResponse(
+        accepted=True,
+        source_type="telemetry",
+        source_ref=event.source_ref,
+        message=f"Maintenance WO created from {event.source_ref}: {event.title[:80]}",
+    )
+
+
+@app.get("/queue")
+async def get_queue():
+    """Inspect the webhook work order queue."""
+    return {
+        "size": webhook_queue.size,
+        "empty": webhook_queue.empty,
+        "next": webhook_queue.peek().model_dump(mode="json") if not webhook_queue.empty else None,
+    }
+
+
+class ProduceRequest(BaseModel):
+    """Request to drain the webhook queue through ShopFloor."""
+    working_dir: str = "./sandbox"
+    max_iterations: int = 100
+    context_type: str = "auto"
+    repo_url: str = ""
+
+
+@app.post("/produce")
+async def produce(request: ProduceRequest):
+    """Drain the webhook queue through ShopFloor as an SSE stream.
+
+    Builds synthetic breakdown text from queued WOs, creates PA in
+    ShopFloor mode, and streams ShopFloor.produce() events.
+    """
+    if webhook_queue.empty:
+        raise HTTPException(status_code=404, detail="Webhook queue is empty")
+
+    # Drain all queued WOs
+    work_orders = webhook_queue.dequeue_batch(max_size=100)
+    if not work_orders:
+        raise HTTPException(status_code=404, detail="No work orders to process")
+
+    # Build synthetic breakdown text matching parse_work_orders() format
+    lines = []
+    for wo in work_orders:
+        deps = f" (depends: {','.join(str(d) for d in wo.depends_on)})" if wo.depends_on else ""
+        lines.append(f"{wo.index}. {wo.prompt}{deps}")
+    breakdown_text = "\n".join(lines)
+    task = f"Process {len(work_orders)} queued work orders"
+
+    async def stream_produce():
+        event_queue: Queue = Queue()
+
+        def run_shopfloor():
+            try:
+                if not os.path.exists(request.working_dir):
+                    os.makedirs(request.working_dir)
+
+                pa = create_pa(
+                    working_dir=request.working_dir,
+                    claude_bin=os.getenv("CLAUDE_BIN"),
+                    context_type=request.context_type,
+                    repo_url=request.repo_url,
+                    use_shopfloor=True,
+                )
+
+                from .shopfloor import ShopFloor
+                from .workstation.quality_gate import VerificationGate
+
+                sf = pa._shopfloor
+                if sf is None:
+                    sf = ShopFloor(pa=pa)
+                    sf.quality_gates.append(VerificationGate())
+
+                for event in sf.produce(task, breakdown_text, request.max_iterations):
+                    event_queue.put(event)
+
+                event_queue.put(None)
+            except Exception as e:
+                event_queue.put(OutputEvent(
+                    event_type=EventType.ERROR,
+                    content=f"ShopFloor error: {e}",
+                    metadata={"error": str(e)},
+                ))
+                event_queue.put(None)
+
+        thread = Thread(target=run_shopfloor, daemon=True)
+        thread.start()
+
+        while True:
+            try:
+                event = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: event_queue.get(timeout=0.1)
+                )
+                if event is None:
+                    break
+                yield event_to_sse(event)
+            except Empty:
+                continue
+            except asyncio.CancelledError:
+                break
+
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        stream_produce(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _record_source_event(source_type: str, accepted: bool) -> None:
+    """Record source adapter metrics."""
+    try:
+        telemetry = get_telemetry()
+        if telemetry.enabled and hasattr(telemetry, "source_events_received"):
+            telemetry.source_events_received.add(1, {"source_type": source_type})
+            if accepted and hasattr(telemetry, "source_events_accepted"):
+                telemetry.source_events_accepted.add(1, {"source_type": source_type})
+    except Exception:
+        pass
 
 
 # =============================================================================

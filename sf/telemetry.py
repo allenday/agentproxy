@@ -167,6 +167,11 @@ if OTEL_AVAILABLE:
                 # Initialize metrics
                 self._init_metrics()
                 self._init_factory_metrics()
+                self._init_product_metrics()
+                self._init_kaizen_metrics()
+                self._init_celery_metrics()
+                self._init_supervisor_metrics()
+                self._init_source_metrics()
                 print(f"\033[2m│ 📊 OTEL     │\033[0m Telemetry initialization complete ✓")
 
             except Exception as e:
@@ -363,6 +368,165 @@ if OTEL_AVAILABLE:
                 "quality_gate.inspections",
                 description="Quality gate inspections by gate and result",
                 unit="1",
+            )
+
+        def _init_product_metrics(self):
+            """Create Plane 2 (Product Operations) metric instruments.
+
+            Plane 2 is post-output / in-field telemetry. It measures what
+            happens to the software product after it ships. Signals feed
+            back into the factory as new work orders.
+            """
+            if not self.meter:
+                return
+
+            self.product_deployments = self.meter.create_counter(
+                "product.deployments",
+                description="Products deployed by version and environment",
+                unit="1",
+            )
+            self.product_incidents = self.meter.create_counter(
+                "product.incidents",
+                description="Incidents detected in-field by severity and component",
+                unit="1",
+            )
+            self.product_mttr = self.meter.create_histogram(
+                "product.mttr",
+                description="Mean time to repair (incident to resolution)",
+                unit="s",
+            )
+            self.product_regression_rate = self.meter.create_histogram(
+                "product.regression_rate",
+                description="Regressions per deployment",
+                unit="1",
+            )
+            self.product_feedback_wos_generated = self.meter.create_counter(
+                "product.feedback_wos.generated",
+                description="Maintenance work orders generated from field signals",
+                unit="1",
+            )
+            self.product_feedback_wos_resolved = self.meter.create_counter(
+                "product.feedback_wos.resolved",
+                description="Field-sourced WOs that resolved the issue",
+                unit="1",
+            )
+            self.product_availability = self.meter.create_histogram(
+                "product.availability",
+                description="Product availability percentage",
+                unit="%",
+            )
+            self.product_defect_escape_rate = self.meter.create_histogram(
+                "product.defect_escape_rate",
+                description="Defects that passed quality gates but failed in-field",
+                unit="1",
+            )
+
+        def _init_kaizen_metrics(self):
+            """Create Kaizen (continuous improvement) metrics for Planes 0/1.
+
+            These are intra-factory metrics measuring the feedback loop
+            effectiveness, NOT product metrics (Plane 2).
+            """
+            if not self.meter:
+                return
+
+            self.kaizen_first_pass_yield = self.meter.create_histogram(
+                "kaizen.first_pass_yield",
+                description="Ratio of work orders passing quality gates on first attempt",
+                unit="1",
+            )
+            self.kaizen_rework_ratio = self.meter.create_histogram(
+                "kaizen.rework_ratio",
+                description="Ratio of rework WOs to original WOs (>0.5 = more fixing than producing)",
+                unit="1",
+            )
+            self.kaizen_defect_recurrence = self.meter.create_counter(
+                "kaizen.defect_recurrence",
+                description="Same defect recurring (routing/decomposition needs change)",
+                unit="1",
+            )
+            self.kaizen_convergence_time = self.meter.create_histogram(
+                "kaizen.convergence_time",
+                description="Time for feedback loop to converge (catches unbounded loops)",
+                unit="s",
+            )
+            self.kaizen_loop_cycles = self.meter.create_counter(
+                "kaizen.loop_cycles",
+                description="Number of feedback loop cycles executed",
+                unit="1",
+            )
+
+        def _init_celery_metrics(self):
+            """Create Celery distributed execution metrics (Plane 1 extension)."""
+            if not self.meter:
+                return
+
+            self.celery_tasks_dispatched = self.meter.create_counter(
+                "celery.tasks.dispatched",
+                description="Work orders dispatched to Celery workers",
+                unit="1",
+            )
+            self.celery_task_queue_time = self.meter.create_histogram(
+                "celery.task.queue_time",
+                description="Time work order spent in Celery queue before pickup",
+                unit="s",
+            )
+            self.celery_worker_active = self.meter.create_up_down_counter(
+                "celery.worker.active",
+                description="Active Celery workers",
+                unit="1",
+            )
+            self.assembly_remote_integrations = self.meter.create_counter(
+                "assembly.remote_integrations",
+                description="Remote branch integrations (fetch + merge)",
+                unit="1",
+            )
+
+        def _init_supervisor_metrics(self):
+            """Create Supervisor/Worker PA hierarchy metrics (Plane 1 extension)."""
+            if not self.meter:
+                return
+
+            self.supervisor_workers_active = self.meter.create_up_down_counter(
+                "supervisor.workers.active",
+                description="Active Worker PAs under supervision",
+                unit="1",
+            )
+            self.supervisor_delegation_depth = self.meter.create_histogram(
+                "supervisor.delegation_depth",
+                description="Nesting depth (Supervisor -> Worker -> Sub-Worker)",
+                unit="1",
+            )
+            self.supervisor_total_cost = self.meter.create_counter(
+                "supervisor.total_cost",
+                description="Aggregate cost across all Workers",
+                unit="usd",
+            )
+            self.supervisor_intervention = self.meter.create_counter(
+                "supervisor.intervention",
+                description="Times Supervisor intervened in a stuck Worker",
+                unit="1",
+            )
+
+        def _init_source_metrics(self):
+            """Create source adapter metrics for external demand channels."""
+            if not self.meter:
+                return
+
+            self.source_events_received = self.meter.create_counter(
+                "source.events.received",
+                description="External events received by source_type",
+                unit="1",
+            )
+            self.source_events_accepted = self.meter.create_counter(
+                "source.events.accepted",
+                description="Events that produced a WorkOrder",
+                unit="1",
+            )
+            self.source_leadtime_external = self.meter.create_histogram(
+                "source.leadtime.external",
+                description="External event to WO completion time",
+                unit="s",
             )
 
         def instrument_fastapi(self, app):

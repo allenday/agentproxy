@@ -431,16 +431,19 @@ class FunctionExecutor:
     The executor maintains a queue for Claude instructions.
     """
     
-    def __init__(self, working_dir: str = ".", memory: Any = None) -> None:
+    def __init__(self, working_dir: str = ".", memory: Any = None,
+                 plugin_manager: Any = None) -> None:
         """
         Initialize executor.
-        
+
         Args:
             working_dir: Working directory for file operations.
             memory: Reference to PAMemory for task management.
+            plugin_manager: Optional PluginManager for ON_FUNCTION_PRE/POST hooks.
         """
         self.working_dir = working_dir
         self._memory = memory
+        self._plugin_manager = plugin_manager
         self._claude_queue: Queue = Queue()
     
     def execute(self, call: FunctionCall) -> FunctionResult:
@@ -493,11 +496,36 @@ class FunctionExecutor:
                     function_span.end()
                 return result
 
+            # Plugin hook: ON_FUNCTION_PRE (Phase 6)
+            if self._plugin_manager:
+                try:
+                    from .plugins.base import PluginHookPhase
+                    self._plugin_manager.trigger_hook(
+                        PluginHookPhase.ON_FUNCTION_PRE,
+                        function_name=call.name.value,
+                        arguments=call.arguments,
+                    )
+                except Exception:
+                    pass  # Plugin hooks should never break function execution
+
             # Execute the handler
             import time
             start_time = time.time()
             result = handler(call.arguments)
             duration = time.time() - start_time
+
+            # Plugin hook: ON_FUNCTION_POST (Phase 6)
+            if self._plugin_manager:
+                try:
+                    from .plugins.base import PluginHookPhase
+                    self._plugin_manager.trigger_hook(
+                        PluginHookPhase.ON_FUNCTION_POST,
+                        function_name=call.name.value,
+                        success=result.success,
+                        duration=duration,
+                    )
+                except Exception:
+                    pass
 
             # Record tool metrics
             if telemetry.enabled:

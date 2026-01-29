@@ -2,8 +2,12 @@
 Workstation
 ===========
 
-The isolated execution environment. HAS-A Fixture, HAS hooks.
-Manages lifecycle: commission → produce → checkpoint → decommission.
+The isolated execution environment. HAS-A Fixture, HAS hooks, HAS-A SOP.
+Manages lifecycle: commission -> produce -> checkpoint -> decommission.
+
+During commission, if an SOP is attached, it materializes as:
+  - CLAUDE.md written to workstation path (Claude reads natively)
+  - .claude/settings.json hooks written for enforcement
 """
 
 import time
@@ -11,6 +15,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from .capabilities import WorkstationCapabilities
 from .fixtures.base import Fixture
 
 
@@ -48,26 +53,40 @@ class WorkstationHook(ABC):
 class Workstation:
     """Isolated execution environment for a work order.
 
-    A Workstation HAS-A Fixture (VCS strategy) and lifecycle hooks.
-    Separates lifecycle/hooks from VCS mechanics — hooks are portable
-    across fixture types.
+    A Workstation HAS-A Fixture (VCS strategy), HAS lifecycle hooks,
+    and optionally HAS-A SOP (Standard Operating Procedure).
+
+    During commission, the SOP is materialized:
+      - CLAUDE.md written to workstation path
+      - .claude/settings.json hooks written for enforcement
+      - Pre-conditions checked
     """
 
     def __init__(
         self,
         fixture: Fixture,
-        capabilities: Dict[str, Any] = None,
-        hooks: List[WorkstationHook] = None,
+        capabilities: Any = None,
+        hooks: Optional[List[WorkstationHook]] = None,
+        sop: Any = None,
     ):
+        # Accept both typed WorkstationCapabilities and legacy Dict[str, Any]
+        if isinstance(capabilities, WorkstationCapabilities):
+            self.capabilities: WorkstationCapabilities = capabilities
+        elif isinstance(capabilities, dict) and capabilities:
+            self.capabilities = WorkstationCapabilities(**capabilities)
+        else:
+            self.capabilities = WorkstationCapabilities()
+
         self.fixture = fixture
-        self.capabilities: Dict[str, Any] = capabilities or {}
         self.hooks: List[WorkstationHook] = hooks or []
+        self.sop = sop  # Optional[SOP] - lazy import to avoid circular
         self.state: WorkstationState = WorkstationState.IDLE
 
     def commission(self) -> str:
         """Set up the workstation. Returns working directory path.
 
         Calls pre_commission hooks, then fixture.setup().
+        If an SOP is attached, materializes CLAUDE.md + hooks.
         Records setup_time metric for SMED tracking.
         """
         start_time = time.time()
@@ -75,6 +94,18 @@ class Workstation:
         for hook in self.hooks:
             hook.pre_commission(self)
         path = self.fixture.setup()
+
+        # Materialize SOP if attached
+        if self.sop is not None:
+            self.sop.materialize(path)
+            # Run pre-conditions
+            errors = self.sop.run_pre_conditions(path)
+            if errors:
+                import logging
+                logger = logging.getLogger(__name__)
+                for err in errors:
+                    logger.warning("SOP pre-condition: %s", err)
+
         self.state = WorkstationState.READY
 
         # Record OTEL workstation setup time
@@ -97,6 +128,8 @@ class Workstation:
         """Tear down the workstation.
 
         Calls post_production hooks, then fixture.teardown().
+        SOP artifacts (CLAUDE.md, .claude/) are cleaned up automatically
+        when the fixture removes the working directory.
         """
         self.state = WorkstationState.DECOMMISSIONING
         for hook in self.hooks:
@@ -121,8 +154,8 @@ class Workstation:
     def spawn(self, name: str) -> "Workstation":
         """Commission a parallel workstation (fork/worktree).
 
-        Creates a child workstation with the same capabilities and hooks
-        but an isolated fixture.
+        Creates a child workstation with the same capabilities, hooks,
+        and SOP but an isolated fixture.
 
         Args:
             name: Identifier for the child (used in branch names, etc.)
@@ -133,8 +166,9 @@ class Workstation:
         child_fixture = self.fixture.fork(name)
         return Workstation(
             fixture=child_fixture,
-            capabilities=dict(self.capabilities),
+            capabilities=self.capabilities.model_copy(),
             hooks=list(self.hooks),
+            sop=self.sop,
         )
 
     @property
@@ -144,18 +178,29 @@ class Workstation:
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize workstation state for Celery transport."""
-        return {
+        data: Dict[str, Any] = {
             "fixture": self.fixture.serialize(),
-            "capabilities": self.capabilities,
+            "capabilities": self.capabilities.model_dump(),
             "state": self.state.value,
-            # Hooks are not serialized (they're code, not data)
         }
+        if self.sop is not None:
+            data["sop"] = self.sop.model_dump()
+        return data
 
     @staticmethod
     def deserialize(data: Dict[str, Any]) -> "Workstation":
         """Reconstruct a Workstation from serialized data."""
+        from .sop import SOP
+
         fixture = Fixture.deserialize(data["fixture"])
+        caps = WorkstationCapabilities(**data.get("capabilities", {}))
+
+        sop = None
+        if "sop" in data and data["sop"] is not None:
+            sop = SOP(**data["sop"])
+
         return Workstation(
             fixture=fixture,
-            capabilities=data.get("capabilities", {}),
+            capabilities=caps,
+            sop=sop,
         )

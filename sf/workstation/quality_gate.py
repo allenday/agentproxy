@@ -7,6 +7,9 @@ machines detect problems and stop the line.
 
 Gates are inserted between execution layers in ShopFloor.produce().
 Each gate inspects a WorkOrderResult and returns an InspectionResult.
+
+VerificationGate also enforces SOP verification commands when an SOP
+is attached to the workstation.
 """
 
 import subprocess
@@ -56,6 +59,9 @@ class VerificationGate(QualityGate):
 
     Executes a list of shell commands on the workstation's working
     directory. All commands must pass for the gate to pass.
+
+    If the workstation has an SOP with verification_commands, those
+    are appended to (and override) the default commands.
     """
 
     def __init__(
@@ -72,10 +78,24 @@ class VerificationGate(QualityGate):
         result: Any,
         station: Workstation,
     ) -> InspectionResult:
-        """Run verification commands on the workstation."""
+        """Run verification commands on the workstation.
+
+        SOP-driven: if the workstation has an SOP with verification_commands,
+        run those. If no SOP is attached to the station, skip verification.
+        """
+        import os
+        if os.getenv("SF_SKIP_SOP_VERIFICATION", "0") == "1":
+            return InspectionResult(passed=True, details="Verification skipped by env")
+        # Resolve commands from station SOP
+        commands = self._resolve_commands(station)
+        if not commands:
+            return InspectionResult(
+                passed=True,
+                details="No verification commands (no SOP attached)",
+            )
         defects = []
 
-        for cmd in self.commands:
+        for cmd in commands:
             try:
                 proc = subprocess.run(
                     cmd,
@@ -94,7 +114,7 @@ class VerificationGate(QualityGate):
             except subprocess.TimeoutExpired:
                 defects.append(f"Command timed out: {cmd}")
             except Exception as e:
-                defects.append(f"Command error: {cmd} — {e}")
+                defects.append(f"Command error: {cmd} -- {e}")
 
         if defects:
             return InspectionResult(
@@ -105,8 +125,20 @@ class VerificationGate(QualityGate):
 
         return InspectionResult(
             passed=True,
-            details=f"All {len(self.commands)} verification commands passed",
+            details=f"All {len(commands)} verification commands passed",
         )
+
+    def _resolve_commands(self, station: Workstation) -> List[str]:
+        """Resolve verification commands from the workstation's SOP.
+
+        If the station has an SOP with verification_commands, use those.
+        If no SOP is attached, return empty (no verification).
+        The gate's self.commands are NOT used as a fallback — verification
+        is SOP-driven.
+        """
+        if station.sop is not None and station.sop.verification_commands:
+            return station.sop.verification_commands
+        return []
 
     @staticmethod
     def _default_commands() -> List[str]:

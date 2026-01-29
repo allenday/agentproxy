@@ -416,7 +416,10 @@ class TestWorkstation:
         station.commission()
 
         child = station.spawn("child-1")
-        assert child.capabilities == caps
+        # Capabilities are now typed WorkstationCapabilities, not dicts
+        assert child.capabilities.gpu is True
+        assert child.capabilities.context_window == 200000
+        assert child.capabilities == station.capabilities
         child.commission()
         assert child.state == WorkstationState.READY
 
@@ -466,7 +469,8 @@ class TestWorkstation:
 
         data = station.serialize()
         assert "fixture" in data
-        assert data["capabilities"] == {"gpu": True}
+        # Capabilities are now fully typed; check the key field
+        assert data["capabilities"]["gpu"] is True
 
         restored = Workstation.deserialize(data)
         assert restored.path == station.path
@@ -485,35 +489,44 @@ class TestWorkstation:
 
 class TestVerificationGate:
 
-    def test_passing_command(self, tmp_path):
+    def _make_station_with_sop(self, tmp_path, verification_commands):
+        """Create a workstation with an SOP that has verification_commands."""
+        from sf.workstation.sop import SOP
         fixture = LocalDirFixture(path=str(tmp_path))
         station = Workstation(fixture=fixture)
         station.commission()
+        station.sop = SOP(name="test", claude_md="", verification_commands=verification_commands)
+        return station
 
-        gate = VerificationGate(commands=["true"])
+    def test_passing_command(self, tmp_path):
+        station = self._make_station_with_sop(tmp_path, ["true"])
+        gate = VerificationGate()
         result = gate.inspect(None, None, station)
         assert result.passed is True
         assert len(result.defects) == 0
 
     def test_failing_command(self, tmp_path):
-        fixture = LocalDirFixture(path=str(tmp_path))
-        station = Workstation(fixture=fixture)
-        station.commission()
-
-        gate = VerificationGate(commands=["false"])
+        station = self._make_station_with_sop(tmp_path, ["false"])
+        gate = VerificationGate()
         result = gate.inspect(None, None, station)
         assert result.passed is False
         assert len(result.defects) == 1
 
     def test_multiple_commands_one_fails(self, tmp_path):
-        fixture = LocalDirFixture(path=str(tmp_path))
-        station = Workstation(fixture=fixture)
-        station.commission()
-
-        gate = VerificationGate(commands=["true", "false", "true"])
+        station = self._make_station_with_sop(tmp_path, ["true", "false", "true"])
+        gate = VerificationGate()
         result = gate.inspect(None, None, station)
         assert result.passed is False
         assert len(result.defects) == 1  # Only 'false' fails
+
+    def test_no_sop_skips_verification(self, tmp_path):
+        fixture = LocalDirFixture(path=str(tmp_path))
+        station = Workstation(fixture=fixture)
+        station.commission()
+        gate = VerificationGate()
+        result = gate.inspect(None, None, station)
+        assert result.passed is True
+        assert "No verification commands" in result.details
 
 
 class TestHumanApprovalGate:

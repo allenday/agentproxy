@@ -10,6 +10,9 @@ from .models import WorkOrder, WorkOrderResult, WorkOrderStatus
 from .routing import build_layers, match_capabilities, parse_work_orders
 from .assembly import AssemblyStation, IntegrationResult, IntegrationStatus
 from .shopfloor import ShopFloor
+from .analyzer import ResultAnalyzer
+from .queue import WorkOrderQueue
+from .dispatch import DispatchStrategy, DirectClaudeDispatch, CeleryDispatch, WorkerPADispatch
 
 __all__ = [
     "ShopFloor",
@@ -22,6 +25,12 @@ __all__ = [
     "build_layers",
     "match_capabilities",
     "parse_work_orders",
+    "ResultAnalyzer",
+    "WorkOrderQueue",
+    "DispatchStrategy",
+    "DirectClaudeDispatch",
+    "CeleryDispatch",
+    "WorkerPADispatch",
 ]
 
 

@@ -5,7 +5,12 @@ Celery Tasks
 Defines the distributed task for executing a work order on a remote worker.
 
 Each worker receives a serialized WorkOrder + Workstation, reconstructs
-the environment, and runs Claude via PA._stream_claude().
+the environment, and runs Claude via subprocess.
+
+Phase 4 additions:
+- OTEL context propagation (link worker spans to supervisor trace)
+- Heartbeat via self.update_state(state='PROGRESS')
+- SOP materialization during worker commission
 """
 
 from .celery_app import make_celery_app
@@ -15,14 +20,16 @@ celery_app = make_celery_app()
 
 @celery_app.task(bind=True, name="sf.shopfloor.run_work_order")
 def run_work_order(self, work_order_data: dict, workstation_data: dict,
-                   prior_context: list, claude_bin: str = "claude") -> dict:
+                   prior_context: list, claude_bin: str = "claude",
+                   otel_context: dict = None) -> dict:
     """Execute a single work order on a Celery worker.
 
     Args:
         work_order_data: Serialized WorkOrder dict.
-        workstation_data: Serialized Workstation dict (fixture + capabilities).
+        workstation_data: Serialized Workstation dict (fixture + capabilities + sop).
         prior_context: List of summary strings from earlier work orders.
         claude_bin: Path to claude binary.
+        otel_context: Serialized OTEL trace context for linking spans.
 
     Returns:
         Serialized WorkOrderResult dict.
@@ -40,6 +47,12 @@ def run_work_order(self, work_order_data: dict, workstation_data: dict,
     wo.status = WorkOrderStatus.IN_PROGRESS
     start_time = time.time()
 
+    # Heartbeat: report progress
+    self.update_state(state="PROGRESS", meta={
+        "wo_index": wo.index,
+        "status": "commissioning",
+    })
+
     # Build enriched prompt
     prompt = wo.prompt
     if prior_context:
@@ -47,10 +60,24 @@ def run_work_order(self, work_order_data: dict, workstation_data: dict,
         prompt = f"Context from prior work:\n{context_str}\n\nCurrent task:\n{prompt}"
 
     # Commission the workstation on this worker
+    # SOP materialization happens inside commission() automatically
     station.commission()
+
+    self.update_state(state="PROGRESS", meta={
+        "wo_index": wo.index,
+        "status": "producing",
+    })
 
     events = []
     files_changed = []
+
+    # Set up OTEL environment for subprocess if context provided
+    env = None
+    if otel_context:
+        import os
+        env = os.environ.copy()
+        env["OTEL_TRACE_ID"] = otel_context.get("trace_id", "")
+        env["OTEL_SPAN_ID"] = otel_context.get("span_id", "")
 
     try:
         # Execute Claude subprocess on the workstation's directory
@@ -62,6 +89,7 @@ def run_work_order(self, work_order_data: dict, workstation_data: dict,
             text=True,
             cwd=station.path,
             bufsize=1,
+            env=env,
         )
 
         while True:
@@ -80,6 +108,14 @@ def run_work_order(self, work_order_data: dict, workstation_data: dict,
             except json.JSONDecodeError:
                 events.append({"type": "raw", "content": line[:500]})
 
+            # Periodic heartbeat
+            if len(events) % 50 == 0:
+                self.update_state(state="PROGRESS", meta={
+                    "wo_index": wo.index,
+                    "status": "producing",
+                    "events_count": len(events),
+                })
+
         process.wait(timeout=300)
 
         # Checkpoint
@@ -92,6 +128,12 @@ def run_work_order(self, work_order_data: dict, workstation_data: dict,
 
         duration = time.time() - start_time
         wo.status = WorkOrderStatus.COMPLETED
+
+        self.update_state(state="PROGRESS", meta={
+            "wo_index": wo.index,
+            "status": "completed",
+            "duration": duration,
+        })
 
         return WorkOrderResult(
             status="completed",

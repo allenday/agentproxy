@@ -1,11 +1,12 @@
 """
-Plugin base classes for SF Plugin Architecture.
+SF Plugin System: Base classes for hook-based plugin architecture.
 
 Defines the ABC, hook phases, result types, and context carrier
 for the hook-based plugin system.
+
+Phase 6: All 7 aspirational hooks are now wired and dispatched.
 """
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -14,21 +15,21 @@ from typing import Any, Dict, Optional
 class PluginHookPhase(str, Enum):
     """Hook phases in the PA lifecycle.
 
-    Essential (wired in v1):
+    Essential (wired since Phase 2):
         ON_TASK_START, ON_TASK_COMPLETE, ON_TASK_ERROR, ON_PA_DECISION
 
-    Aspirational (defined for forward compat, NOT wired yet):
+    Aspirational (Phase 6 -- now wired):
         ON_FUNCTION_PRE, ON_FUNCTION_POST, ON_CLAUDE_START, ON_CLAUDE_COMPLETE,
         ON_VERIFY_START, ON_VERIFY_COMPLETE, ON_FILE_CHANGE
     """
 
-    # Essential — wired in pa.py
+    # Essential -- wired in pa.py
     ON_TASK_START = "on_task_start"
     ON_TASK_COMPLETE = "on_task_complete"
     ON_TASK_ERROR = "on_task_error"
     ON_PA_DECISION = "on_pa_decision"
 
-    # Aspirational — NOT wired yet
+    # Aspirational -- now wired (Phase 6)
     ON_FUNCTION_PRE = "on_function_pre"
     ON_FUNCTION_POST = "on_function_post"
     ON_CLAUDE_START = "on_claude_start"
@@ -77,13 +78,16 @@ class PluginContext:
     data: Dict[str, Any] = field(default_factory=dict)
 
 
-class SFPlugin(ABC):
+class SFPlugin:
     """Abstract base class for SF plugins.
 
     Subclasses must implement `name`. Override specific hook methods
-    (on_task_start, on_task_complete, on_task_error, on_pa_decision)
     to receive those hooks. The base class provides default no-op
     implementations that return PluginResult.ok().
+
+    All 11 hooks are now wired and dispatched:
+    - 4 essential hooks (Phase 2)
+    - 7 aspirational hooks (Phase 6)
 
     Example::
 
@@ -95,13 +99,16 @@ class SFPlugin(ABC):
             def on_task_start(self, ctx: PluginContext) -> PluginResult:
                 print(f"Task started with data: {ctx.data}")
                 return PluginResult.ok()
+
+            def on_claude_start(self, ctx: PluginContext) -> PluginResult:
+                print(f"Claude starting: {ctx.data.get('instruction', '')[:50]}")
+                return PluginResult.ok()
     """
 
     @property
-    @abstractmethod
     def name(self) -> str:
-        """Unique plugin name."""
-        ...
+        """Unique plugin name. Must be implemented by subclass."""
+        raise NotImplementedError
 
     @property
     def version(self) -> str:
@@ -121,43 +128,120 @@ class SFPlugin(ABC):
         Returns True if the subclass overrides the corresponding method
         (i.e., it's not the default base class implementation).
         """
-        method_map = {
-            PluginHookPhase.ON_TASK_START: "on_task_start",
-            PluginHookPhase.ON_TASK_COMPLETE: "on_task_complete",
-            PluginHookPhase.ON_TASK_ERROR: "on_task_error",
-            PluginHookPhase.ON_PA_DECISION: "on_pa_decision",
-        }
-        method_name = method_map.get(phase)
+        method_name = _PHASE_TO_METHOD.get(phase)
         if method_name is None:
             return False
-        # Check if the method on this instance's class differs from SFPlugin's default
         own_method = getattr(type(self), method_name, None)
         base_method = getattr(SFPlugin, method_name, None)
         return own_method is not base_method
 
     def execute_hook(self, ctx: PluginContext) -> PluginResult:
         """Dispatch to the appropriate hook method based on phase."""
-        dispatch = {
-            PluginHookPhase.ON_TASK_START: self.on_task_start,
-            PluginHookPhase.ON_TASK_COMPLETE: self.on_task_complete,
-            PluginHookPhase.ON_TASK_ERROR: self.on_task_error,
-            PluginHookPhase.ON_PA_DECISION: self.on_pa_decision,
-        }
-        handler = dispatch.get(ctx.phase)
+        method_name = _PHASE_TO_METHOD.get(ctx.phase)
+        if method_name is None:
+            return PluginResult.ok()
+        handler = getattr(self, method_name, None)
         if handler is None:
             return PluginResult.ok()
         return handler(ctx)
 
-    # Default no-op implementations for essential hooks
+    # =========================================================================
+    # Essential hooks (wired since Phase 2)
+    # =========================================================================
 
     def on_task_start(self, ctx: PluginContext) -> PluginResult:
+        """Called before task execution begins.
+
+        Context data: session_id, task, working_dir
+        """
         return PluginResult.ok()
 
     def on_task_complete(self, ctx: PluginContext) -> PluginResult:
+        """Called after task completes successfully.
+
+        Context data: session_id, task, files_changed_count
+        """
         return PluginResult.ok()
 
     def on_task_error(self, ctx: PluginContext) -> PluginResult:
+        """Called when task encounters an error.
+
+        Context data: session_id, task, error
+        """
         return PluginResult.ok()
 
     def on_pa_decision(self, ctx: PluginContext) -> PluginResult:
+        """Called after each PA reasoning cycle.
+
+        Context data: decision, function_name, iteration
+        """
         return PluginResult.ok()
+
+    # =========================================================================
+    # Aspirational hooks (Phase 6 -- now wired)
+    # =========================================================================
+
+    def on_function_pre(self, ctx: PluginContext) -> PluginResult:
+        """Called before FunctionExecutor.execute().
+
+        Context data: function_name, arguments
+        """
+        return PluginResult.ok()
+
+    def on_function_post(self, ctx: PluginContext) -> PluginResult:
+        """Called after FunctionExecutor.execute().
+
+        Context data: function_name, success, duration
+        """
+        return PluginResult.ok()
+
+    def on_claude_start(self, ctx: PluginContext) -> PluginResult:
+        """Called before PA._stream_claude() begins streaming.
+
+        Context data: instruction, iteration, working_dir
+        """
+        return PluginResult.ok()
+
+    def on_claude_complete(self, ctx: PluginContext) -> PluginResult:
+        """Called after PA._stream_claude() completes.
+
+        Context data: instruction, event_count, working_dir
+        """
+        return PluginResult.ok()
+
+    def on_verify_start(self, ctx: PluginContext) -> PluginResult:
+        """Called before quality gate inspection begins.
+
+        Context data: gate_type, work_order_index
+        """
+        return PluginResult.ok()
+
+    def on_verify_complete(self, ctx: PluginContext) -> PluginResult:
+        """Called after quality gate inspection completes.
+
+        Context data: gate_type, passed, defects
+        """
+        return PluginResult.ok()
+
+    def on_file_change(self, ctx: PluginContext) -> PluginResult:
+        """Called when a file tool (Write, Edit) modifies a file.
+
+        Context data: tool_name, file_path, change_type
+        """
+        return PluginResult.ok()
+
+
+# Phase -> method name mapping (used by supports_hook and execute_hook)
+_PHASE_TO_METHOD = {
+    PluginHookPhase.ON_TASK_START: "on_task_start",
+    PluginHookPhase.ON_TASK_COMPLETE: "on_task_complete",
+    PluginHookPhase.ON_TASK_ERROR: "on_task_error",
+    PluginHookPhase.ON_PA_DECISION: "on_pa_decision",
+    PluginHookPhase.ON_FUNCTION_PRE: "on_function_pre",
+    PluginHookPhase.ON_FUNCTION_POST: "on_function_post",
+    PluginHookPhase.ON_CLAUDE_START: "on_claude_start",
+    PluginHookPhase.ON_CLAUDE_COMPLETE: "on_claude_complete",
+    PluginHookPhase.ON_VERIFY_START: "on_verify_start",
+    PluginHookPhase.ON_VERIFY_COMPLETE: "on_verify_complete",
+    PluginHookPhase.ON_FILE_CHANGE: "on_file_change",
+}

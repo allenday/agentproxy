@@ -3,10 +3,12 @@ Workstation Package
 ===================
 
 Isolated execution environments for work orders.
-A Workstation HAS-A Fixture (VCS strategy) and lifecycle hooks.
+A Workstation HAS-A Fixture (VCS strategy), lifecycle hooks, and an SOP.
 """
 
 from .workstation import Workstation, WorkstationState, WorkstationHook
+from .capabilities import WorkstationCapabilities
+from .sop import SOP, ClaudeHook, SOP_V0, SOP_HOTFIX, SOP_REFACTOR, SOP_DOCUMENTATION, get_sop, register_sop, SOP_REGISTRY
 from .fixtures import (
     Fixture, LocalDirFixture, GitRepoFixture, GitWorktreeFixture, GitCloneFixture,
 )
@@ -16,6 +18,16 @@ __all__ = [
     "Workstation",
     "WorkstationState",
     "WorkstationHook",
+    "WorkstationCapabilities",
+    "SOP",
+    "ClaudeHook",
+    "SOP_V0",
+    "SOP_HOTFIX",
+    "SOP_REFACTOR",
+    "SOP_DOCUMENTATION",
+    "SOP_REGISTRY",
+    "get_sop",
+    "register_sop",
     "Fixture",
     "LocalDirFixture",
     "GitRepoFixture",
@@ -36,6 +48,7 @@ def create_workstation(
     repo_url: str = "",
     capabilities: dict = None,
     hooks: list = None,
+    sop_name: str = None,
 ) -> Workstation:
     """Factory function to create a Workstation with the appropriate Fixture.
 
@@ -45,6 +58,7 @@ def create_workstation(
         repo_url: Git remote URL (for clone-based fixtures).
         capabilities: Dict of workstation capabilities.
         hooks: List of WorkstationHook instances.
+        sop_name: Name of the SOP to attach (from registry).
 
     Returns:
         Configured Workstation instance (not yet commissioned).
@@ -82,8 +96,12 @@ def create_workstation(
     else:
         fixture = LocalDirFixture(path=working_dir)
 
+    # Resolve SOP
+    sop = get_sop(sop_name) if sop_name else None
+
     return Workstation(
         fixture=fixture,
         capabilities=capabilities,
         hooks=hooks,
+        sop=sop,
     )
