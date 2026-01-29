@@ -794,7 +794,15 @@ class ShopFloor:
                 LLMMessage(role="user", content=f"Task: {prompt}\nGenerate minimal code + tests."),
             ]
             request = LLMRequest(messages=messages, model=None, provider=provider_name)
-            result = provider.generate(request)
+            # Ensure codex_cli runs in the station workdir
+            prev_cwd = os.getcwd()
+            os.chdir(station.path)
+            os.environ["SF_WORKDIR"] = station.path
+            try:
+                result = provider.generate(request)
+            finally:
+                os.chdir(prev_cwd)
+                os.environ.pop("SF_WORKDIR", None)
             data = json.loads(result.text)
             files = data.get("files", []) if isinstance(data, dict) else []
         except Exception:

@@ -88,11 +88,11 @@ class CodexCLIProvider(LLMProvider):
                 capture_output=True,
                 text=True,
                 timeout=120,
-                cwd=os.getcwd(),
+                cwd=os.getenv("SF_WORKDIR", os.getcwd()),
             )
             raw_out = proc.stdout or ""
             if proc.returncode != 0:
-                return LLMResult(text=proc.stderr or raw_out or "codex cli error", provider=self.name)
+                return LLMResult(text=json.dumps({"files": [], "stdout": raw_out, "stderr": proc.stderr}), provider=self.name)
 
             candidate_json = None
             last_text = ""
@@ -127,6 +127,6 @@ class CodexCLIProvider(LLMProvider):
                     # ignore parse errors; keep raw
                     pass
 
-            return LLMResult(text=candidate_json or last_text or raw_out, provider=self.name)
+            return LLMResult(text=candidate_json or last_text or json.dumps({"files": [], "stdout": raw_out, "stderr": proc.stderr}), provider=self.name)
         except Exception as e:
             return LLMResult(text=str(e), provider=self.name)
