@@ -176,15 +176,16 @@ SOP_V0 = SOP(
         ),
     ],
     verification_commands=[
-        "PYTHONPATH=$(pwd):$(pwd)/src python -m pytest --tb=short",
-        "PYTHONPATH=$(pwd):$(pwd)/src python -m pytest --cov --cov-fail-under=70",
-        "python -m py_compile $(find . -name '*.py' -not -path './.git/*' | head -50)",
+        "PYTHONPATH=$(pwd):$(pwd)/src .venv/bin/python -m pytest --tb=short",
+        "PYTHONPATH=$(pwd):$(pwd)/src .venv/bin/python -m pytest --cov --cov-fail-under=70",
+        ".venv/bin/python -m py_compile $(find . -name '*.py' -not -path './.git/*' | head -50)",
     ],
     pre_conditions=[
         "test -d tests || mkdir tests",
-        "python -m pip install -q --upgrade pip",
-        "python -m pip show pydantic >/dev/null 2>&1 || python -m pip install -q pydantic",
-        "python -m pip show pytest >/dev/null 2>&1 || python -m pip install -q pytest",
+        "test -x .venv/bin/python || python3 -m venv .venv",
+        "PIP_CACHE_DIR=$(pwd)/.pip-cache .venv/bin/python -m pip install -q --upgrade pip",
+        "PIP_CACHE_DIR=$(pwd)/.pip-cache .venv/bin/python -m pip show pydantic >/dev/null 2>&1 || PIP_CACHE_DIR=$(pwd)/.pip-cache .venv/bin/python -m pip install -q pydantic",
+        "PIP_CACHE_DIR=$(pwd)/.pip-cache .venv/bin/python -m pip show pytest >/dev/null 2>&1 || PIP_CACHE_DIR=$(pwd)/.pip-cache .venv/bin/python -m pip install -q pytest",
     ],
 )
 
@@ -208,7 +209,7 @@ SOP_HOTFIX = SOP(
 """,
     hooks=[],
     verification_commands=[
-        "python -m pytest --tb=short -x",
+        ".venv/bin/python -m pytest --tb=short -x",
     ],
 )
 
@@ -232,7 +233,7 @@ SOP_REFACTOR = SOP(
 """,
     hooks=[],
     verification_commands=[
-        "python -m pytest --tb=short",
+        ".venv/bin/python -m pytest --tb=short",
     ],
 )
 

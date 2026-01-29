@@ -781,32 +781,157 @@ class ShopFloor:
         """Use a provider that returns JSON {files: [{path, content}]} and apply to the workstation."""
         files_changed: List[str] = []
 
+        def _truncate(text: str, limit: int = 4000) -> str:
+            return text if len(text) <= limit else text[:limit] + "…"
+
+        def _extract_json_like(text: str) -> Optional[dict]:
+            """Best-effort extraction of a JSON object from messy provider output."""
+            if not text:
+                return None
+            # Try direct parse first
+            try:
+                return json.loads(text)
+            except Exception:
+                pass
+            # Try to pull first JSON object in the text
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                snippet = text[start:end + 1]
+                try:
+                    return json.loads(snippet)
+                except Exception:
+                    pass
+            # Try fenced code blocks ```json ... ```
+            for fence in ["```json", "```"]:
+                if fence in text:
+                    parts = text.split(fence)
+                    for part in parts[1:]:
+                        closing = part.find("```")
+                        candidate = part[:closing] if closing != -1 else part
+                        try:
+                            return json.loads(candidate.strip())
+                        except Exception:
+                            continue
+            return None
+
+        def _apply_defaults(data: dict) -> dict:
+            """If provider asks for clarification, inject defaults and clear needs_input."""
+            if not isinstance(data, dict):
+                return data
+            needs = data.get("needs_input") or ""
+            if needs:
+                # Hard defaults for common questions we've seen
+                lower = needs.lower()
+                if "audience" in lower or "purpose" in lower:
+                    data["assumed"] = "Audience: internal contributors to this repository."
+                    data.pop("needs_input", None)
+                if "git workflow sop" in lower or "new git workflow" in lower or "existing docs/workflow_git" in lower:
+                    data["assumed_git_sop"] = "Update existing docs/WORKFLOW_GIT.md and AGENTS.md; do not create new file."
+                    data.pop("needs_input", None)
+            return data
+
         try:
             provider = get_provider(provider_name)
             system_msg = (
-                "You are a coding agent. Return ONLY JSON with a 'files' array; "
-                "each entry has 'path' (relative) and 'content'. "
-                "Project root is current working directory. "
-                "Keep code minimal and runnable."
+                "You are a coding agent. Response format is STRICT: "
+                "a single JSON object like "
+                "{\"files\":[{\"path\":\"relative/path.py\",\"content\":\"...\"}],"
+                "\"stdout\":\"optional text\",\"stderr\":\"optional text\"}. "
+                "You may also return an exception object with no code changes: "
+                "{\"files\":[],\"needs_input\":\"question text\"} or "
+                "{\"files\":[],\"error\":\"reason\"}. "
+                "Do NOT include markdown, code fences, apologies, or any prose. "
+                "Assume the audience is internal contributors to this repository unless instructed otherwise. "
+                "Project root is the current working directory. "
+                "Keep code minimal and runnable; if nothing to change, return "
+                "{\"files\":[],\"stdout\":\"no changes\"}."
+            )
+            # Inject default assumptions to avoid back-and-forth.
+            prompt_with_defaults = (
+                f"{prompt}\n\n"
+                "Assumptions (do not ask questions, proceed):\n"
+                "- Audience: internal contributors to this repository.\n"
+                "- If updating Git SOP, modify existing docs/WORKFLOW_GIT.md and AGENTS.md; do not create new SOP files unless explicitly requested.\n"
+                "- Use project-local worktrees under .worktrees/ when needed.\n"
+                "- Use project-local .venv for Python, install deps with pip there.\n"
+                "- Prefer one-shot JSON response; include code/tests directly.\n"
             )
             messages = [
                 LLMMessage(role="system", content=system_msg),
-                LLMMessage(role="user", content=f"Task: {prompt}\nGenerate minimal code + tests."),
+                LLMMessage(role="user", content=f"Task: {prompt_with_defaults}\nGenerate minimal code + tests."),
             ]
             request = LLMRequest(messages=messages, model=None, provider=provider_name)
-            # Ensure codex_cli runs in the station workdir
-            prev_cwd = os.getcwd()
-            os.chdir(station.path)
-            os.environ["SF_WORKDIR"] = station.path
-            try:
-                result = provider.generate(request)
-            finally:
-                os.chdir(prev_cwd)
-                os.environ.pop("SF_WORKDIR", None)
-            data = json.loads(result.text)
+
+            def _call_provider(req: LLMRequest) -> dict:
+                prev_cwd = os.getcwd()
+                os.chdir(station.path)
+                os.environ["SF_WORKDIR"] = station.path
+                try:
+                    result = provider.generate(req)
+                finally:
+                    os.chdir(prev_cwd)
+                    os.environ.pop("SF_WORKDIR", None)
+                raw_text = result.text or ""
+                try:
+                    data_local = json.loads(raw_text)
+                except Exception:
+                    data_local = _extract_json_like(raw_text)
+                    if data_local is None:
+                        raise ValueError(f"LLM provider '{provider_name}' returned non-JSON output; raw={_truncate(raw_text)}")
+                return data_local
+
+            data = _call_provider(request)
+            data = _apply_defaults(data)
             files = data.get("files", []) if isinstance(data, dict) else []
-        except Exception:
-            files = []
+
+            needs_input = data.get("needs_input") if isinstance(data, dict) else None
+            error_msg = data.get("error") if isinstance(data, dict) else None
+
+            # Retry once if no files produced and no explicit needs_input/error, feeding back stdout to force compliance
+            if not files and not needs_input and not error_msg:
+                stdout = data.get("stdout")
+                stderr = data.get("stderr")
+                returncode = data.get("returncode")
+                retry_msgs = list(messages) + [
+                    LLMMessage(
+                        role="system",
+                        content=(
+                            "Your previous reply produced no 'files'. "
+                            "Respond again NOW with the required single JSON object and include any files to change. "
+                            "Do NOT ask questions; assume sensible defaults. "
+                            f"Previous stdout: {_truncate(stdout or '')}"
+                        ),
+                    )
+                ]
+                retry_req = LLMRequest(messages=retry_msgs, model=None, provider=provider_name)
+                data = _call_provider(retry_req)
+                data = _apply_defaults(data)
+                files = data.get("files", []) if isinstance(data, dict) else []
+                needs_input = data.get("needs_input") if isinstance(data, dict) else None
+                error_msg = data.get("error") if isinstance(data, dict) else None
+
+            if not files:
+                stdout = data.get("stdout")
+                stderr = data.get("stderr")
+                returncode = data.get("returncode")
+                if needs_input:
+                    raise ValueError(
+                        f"LLM provider needs input: {needs_input}; "
+                        f"returncode={returncode}, stdout={_truncate(stdout or '')}, stderr={_truncate(stderr or '')}"
+                    )
+                if error_msg:
+                    raise ValueError(
+                        f"LLM provider error: {error_msg}; "
+                        f"returncode={returncode}, stdout={_truncate(stdout or '')}, stderr={_truncate(stderr or '')}"
+                    )
+                raise ValueError(
+                    "LLM provider returned no files; "
+                    f"returncode={returncode}, stdout={_truncate(stdout or '')}, stderr={_truncate(stderr or '')}"
+                )
+        except Exception as e:
+            # Propagate to caller so the failure is visible in output events.
+            raise
 
         for fobj in files:
             path = fobj.get("path")

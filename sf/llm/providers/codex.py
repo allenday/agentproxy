@@ -4,6 +4,8 @@ from typing import List
 import json
 import shutil
 import subprocess
+import shlex
+from typing import Optional
 
 from ..base import LLMProvider, register_provider
 from ..types import LLMRequest, LLMResult, LLMToolCall
@@ -77,22 +79,70 @@ class CodexCLIProvider(LLMProvider):
         self.codex_bin = shutil.which("codex") or os.getenv("CODEX_BIN", "codex")
         if not shutil.which(self.codex_bin):
             raise ValueError("codex CLI not found on PATH (or set CODEX_BIN)")
+        # Optional: run Codex via ssh localhost to leverage user login shell permissions.
+        self.use_ssh = os.getenv("SF_CODEX_SSH", "0") == "1"
+        self.ssh_host = os.getenv("SF_CODEX_SSH_HOST", "localhost")
+        # Default session dir inside sandbox to avoid ~/.codex TCC issues.
+        self.session_dir = os.getenv(
+            "CODEX_SESSION_DIR",
+            os.path.join(os.getcwd(), "sandbox", ".codex", "sessions"),
+        )
+        # Max wall time; allow override. Default 180s to accommodate Codex bootstrap.
+        self.exec_timeout = int(os.getenv("SF_CODEX_TIMEOUT", "180"))
+
+    def _build_cmd(self, messages: str, workdir: str) -> List[str]:
+        if self.use_ssh:
+            remote_cmd = f"cd {shlex.quote(workdir)} && SF_WORKDIR={shlex.quote(workdir)} {shlex.quote(self.codex_bin)} exec --json {shlex.quote(messages)}"
+            ssh_base = [
+                "ssh",
+                "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                self.ssh_host,
+            ]
+            return ssh_base + [remote_cmd]
+        return [self.codex_bin, "exec", "--json", messages]
 
     def generate(self, request: LLMRequest) -> LLMResult:
         # Combine system + user messages so Codex CLI sees formatting instructions
         messages = "\n".join([m.content for m in request.messages])
-        cmd = [self.codex_bin, "--json", messages]
+        workdir = os.getenv("SF_WORKDIR", os.getcwd())
+        cmd = self._build_cmd(messages, workdir)
+        env = os.environ.copy()
+        if self.session_dir:
+            os.makedirs(self.session_dir, exist_ok=True)
+            env["CODEX_SESSION_DIR"] = self.session_dir
+            # Force Codex to use sandboxed HOME so macOS TCC and ~/.codex perms are avoided.
+            sandbox_home = os.path.dirname(os.path.dirname(self.session_dir.rstrip("/")))
+            env["HOME"] = sandbox_home
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=120,
-                cwd=os.getenv("SF_WORKDIR", os.getcwd()),
+                cwd=None if self.use_ssh else workdir,
+                env=env,
             )
-            raw_out = proc.stdout or ""
-            if proc.returncode != 0:
-                return LLMResult(text=json.dumps({"files": [], "stdout": raw_out, "stderr": proc.stderr}), provider=self.name)
+            try:
+                raw_out, raw_err = proc.communicate(timeout=self.exec_timeout)
+                timed_out = False
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                raw_out, raw_err = proc.communicate()
+                timed_out = True
+
+            raw_out = raw_out or ""
+            payload = {
+                "files": [],
+                "stdout": raw_out,
+                "stderr": raw_err,
+                "returncode": proc.returncode,
+                "cmd": " ".join(cmd),
+                "timeout": timed_out,
+            }
+            if proc.returncode != 0 or timed_out:
+                return LLMResult(text=json.dumps(payload), provider=self.name)
 
             candidate_json = None
             last_text = ""
@@ -127,6 +177,6 @@ class CodexCLIProvider(LLMProvider):
                     # ignore parse errors; keep raw
                     pass
 
-            return LLMResult(text=candidate_json or last_text or json.dumps({"files": [], "stdout": raw_out, "stderr": proc.stderr}), provider=self.name)
+            return LLMResult(text=candidate_json or last_text or json.dumps(payload), provider=self.name)
         except Exception as e:
             return LLMResult(text=str(e), provider=self.name)
