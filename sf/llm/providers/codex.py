@@ -79,7 +79,8 @@ class CodexCLIProvider(LLMProvider):
             raise ValueError("codex CLI not found on PATH (or set CODEX_BIN)")
 
     def generate(self, request: LLMRequest) -> LLMResult:
-        messages = "\n".join([m.content for m in request.messages if m.role == "user"])
+        # Combine system + user messages so Codex CLI sees formatting instructions
+        messages = "\n".join([m.content for m in request.messages])
         cmd = [self.codex_bin, "--json", messages]
         try:
             proc = subprocess.run(
