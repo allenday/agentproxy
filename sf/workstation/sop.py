@@ -176,8 +176,8 @@ SOP_V0 = SOP(
         ),
     ],
     verification_commands=[
-        "python -m pytest --tb=short",
-        "python -m pytest --cov --cov-fail-under=70",
+        "PYTHONPATH=$(pwd):$(pwd)/src python -m pytest --tb=short",
+        "PYTHONPATH=$(pwd):$(pwd)/src python -m pytest --cov --cov-fail-under=70",
         "python -m py_compile $(find . -name '*.py' -not -path './.git/*' | head -50)",
     ],
     pre_conditions=[

@@ -584,7 +584,7 @@ class ShopFloor:
 
             provider_name = getattr(self.pa, "_llm_provider", os.getenv("SF_LLM_PROVIDER", "claude_cli"))
             if provider_name.startswith("codex"):
-                files_changed = self._codex_generate_work(wo, station, prompt)
+                files_changed = self._codex_generate_work(wo, station, prompt, provider_name)
             elif provider_name == "claude_cli":
                 # Stream Claude on the workstation
                 for event in self.pa._stream_claude(prompt, working_dir=station.path):
@@ -596,7 +596,7 @@ class ShopFloor:
                     })
             else:
                 # Other providers generate files directly (reuse codex generation path)
-                files_changed = self._codex_generate_work(wo, station, prompt)
+                files_changed = self._codex_generate_work(wo, station, prompt, provider_name)
 
             # Checkpoint after work
             commit = station.checkpoint(f"WO-{wo.index}: {wo.prompt[:50]}")
@@ -777,12 +777,12 @@ class ShopFloor:
             metadata={"source": "shopfloor"},
         )
 
-    def _codex_generate_work(self, wo: WorkOrder, station: Workstation, prompt: str) -> List[str]:
-        """Use Codex provider to generate file outputs for a work order."""
+    def _codex_generate_work(self, wo: WorkOrder, station: Workstation, prompt: str, provider_name: str = "codex_api") -> List[str]:
+        """Use Codex (or other JSON-file-returning) provider to generate file outputs for a work order."""
         files_changed: List[str] = []
 
         try:
-            provider = get_provider("codex")
+            provider = get_provider(provider_name)
             system_msg = (
                 "You are a coding agent. Return ONLY JSON with a 'files' array; "
                 "each entry has 'path' (relative) and 'content'. "
@@ -793,7 +793,7 @@ class ShopFloor:
                 LLMMessage(role="system", content=system_msg),
                 LLMMessage(role="user", content=f"Task: {prompt}\nGenerate minimal code + tests."),
             ]
-            request = LLMRequest(messages=messages, model=None, provider="codex")
+            request = LLMRequest(messages=messages, model=None, provider=provider_name)
             result = provider.generate(request)
             try:
                 data = json.loads(result.text)
