@@ -778,9 +778,30 @@ class ShopFloor:
         )
 
     def _codex_generate_work(self, wo: WorkOrder, station: Workstation, prompt: str, provider_name: str = "codex_api") -> List[str]:
-        """Use Codex (or other JSON-file-returning) provider to generate file outputs for a work order."""
+        """Use Codex provider to produce files. For codex_cli, run in-place and diff git; for API, use JSON files."""
         files_changed: List[str] = []
 
+        # codex_cli: let the CLI write to disk in the workstation path, then detect changed files
+        if provider_name == "codex_cli":
+            messages = f"Task: {prompt}\nWrite all code and tests to disk under the current working directory. Keep changes minimal and runnable."
+            cmd = ["codex", "exec", "--json", messages]
+            try:
+                subprocess.run(cmd, cwd=station.path, capture_output=True, text=True, timeout=300)
+            except Exception:
+                return []
+            # Detect changed files via git status
+            try:
+                proc = subprocess.run(["git", "status", "--porcelain"], cwd=station.path, capture_output=True, text=True, timeout=10)
+                for line in proc.stdout.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) == 2:
+                        files_changed.append(parts[1])
+            except Exception:
+                pass
+            return files_changed
+
+        # API providers: expect JSON files
+        files = []
         try:
             provider = get_provider(provider_name)
             system_msg = (
@@ -802,17 +823,6 @@ class ShopFloor:
                 files = []
         except Exception:
             files = []
-
-        if not files:
-            # Fallback minimal fib implementation with package inits
-            files = [
-                {"path": "src/fibonacci/fib.py",
-                 "content": "def fib_iter(n):\n    a,b=0,1\n    for _ in range(n): a,b=b,a+b\n    return a\n\ndef fib_rec(n):\n    return n if n<2 else fib_rec(n-1)+fib_rec(n-2)\n"},
-                {"path": "tests/test_fib.py",
-                 "content": "from src.fibonacci.fib import fib_iter, fib_rec\n\ndef test_iter():\n    assert fib_iter(5)==5\n\ndef test_rec():\n    assert fib_rec(6)==8\n"},
-                {"path": "src/__init__.py", "content": ""},
-                {"path": "src/fibonacci/__init__.py", "content": ""},
-            ]
 
         for fobj in files:
             path = fobj.get("path")
