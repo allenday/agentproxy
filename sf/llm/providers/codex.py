@@ -23,17 +23,13 @@ class CodexAPIProvider(LLMProvider):
     name = "codex_api"
 
     def __init__(self):
-        self.stub = os.getenv("SF_LLM_STUB", "0") == "1"
         self.api_key = os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
         self.endpoint = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1/chat/completions")
         self.model = os.getenv("SF_LLM_MODEL", "gpt-4.1-mini")
-        if not self.api_key and not self.stub:
+        if not self.api_key:
             raise ValueError("OPENAI_API_KEY (or CODEX_API_KEY) not set")
 
     def generate(self, request: LLMRequest) -> LLMResult:
-        if self.stub:
-            return LLMResult(text=json.dumps({"files": []}), model=self.model, provider=self.name)
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -78,13 +74,11 @@ class CodexCLIProvider(LLMProvider):
     name = "codex_cli"
 
     def __init__(self):
-        self.stub = os.getenv("SF_LLM_STUB", "0") == "1"
         self.codex_bin = shutil.which("codex") or os.getenv("CODEX_BIN", "codex")
+        if not shutil.which(self.codex_bin):
+            raise ValueError("codex CLI not found on PATH (or set CODEX_BIN)")
 
     def generate(self, request: LLMRequest) -> LLMResult:
-        if self.stub:
-            return LLMResult(text=json.dumps({"files": []}), provider=self.name)
-
         messages = "\n".join([m.content for m in request.messages if m.role == "user"])
         cmd = [self.codex_bin, "--json", messages]
         try:
