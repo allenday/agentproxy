@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pa:*)",
+      "Bash(claude --version:*)",
+      "Bash(~/.claude/local/claude --help)",
+      "Bash(python3:*)",
+      "Bash(echo:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(test:*)",
+      "Bash(ls:*)",
+      "Bash(python cli.py:*)",
+      "Bash(python server.py:*)",
+      "Bash(pa-server:*)",
+      "Bash(git checkout:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git branch:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker compose:*)",
+      "Bash(curl:*)",
+      "Bash(pytest:*)",
+      "Bash(grep:*)",
+      "Bash(for metric in agentproxy_api_requests_total agentproxy_tokens_consumed_total agentproxy_claude_iterations_total agentproxy_api_cost_usd_total)",
+      "Bash(do:*)",
+      "Bash(done)",
+      "Bash(source venv/bin/activate:*)",
+      "Bash(AGENTPROXY_ENABLE_TELEMETRY=1 timeout 120 pa -d /tmp/test-dashboard \"Create a file called hello.py that prints ''''Hello World''''. Then run it to verify it works.\")",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(docker --version:*)",
+      "Bash(pip install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python -c:*)",
+      "Bash(SF_ENABLE_TELEMETRY=0 python:*)",
+      "Bash(git status:*)",
+      "Bash(git show:*)",
+      "Bash(git rev-list:*)"
+    ]
+  }
+}
