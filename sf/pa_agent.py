@@ -8,12 +8,14 @@ Observes Claude's output, reasons about progress, and decides next actions.
 
 import json
 import time
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from .gemini_client import GeminiClient
+from .llm import get_provider, LLMMessage, LLMRequest
 from .telemetry import get_telemetry
 
 # Load .env from project root (go up from sf/ to project root)
@@ -677,9 +679,23 @@ Based on current progress, provide your REASONING and FUNCTION_CALL in JSON form
     
     def generate_task_breakdown(self, task: str) -> str:
         """Generate a task breakdown for the given task using Gemini."""
+        provider_name = os.getenv("SF_LLM_PROVIDER", "claude_cli")
+        if provider_name != "gemini":
+            # Use provider abstraction
+            try:
+                provider = get_provider(provider_name)
+                messages = [
+                    LLMMessage(role="system", content="Create numbered work orders with dependency annotations."),
+                    LLMMessage(role="user", content=f"Task: {task}\nReturn plain text steps."),
+                ]
+                result = provider.generate(LLMRequest(messages=messages, provider=provider_name))
+                return result.text or f"# Task: {task}\n\n- [ ] Complete the task"
+            except Exception:
+                return f"# Task: {task}\n\n- [ ] Complete the task"
+
+        # Gemini path retained for backward compatibility
         if not self._gemini:
             return f"# Task: {task}\n\n- [ ] Complete the task"
-        
         breakdown_prompt = f"""Break down this coding task into numbered work orders.
 
 TASK: {task}
@@ -690,19 +706,7 @@ RULES:
 - Add (depends: N) annotations where step N must complete first
 - Steps WITHOUT dependencies can execute in parallel
 - DO NOT add requirements that aren't in the original task
-
-FORMAT (use exactly this format):
-1. First step description
-2. Second step description (depends: 1)
-3. Third step — can run in parallel with step 2 (depends: 1)
-4. Final integration step (depends: 2, 3)
-
-EXAMPLE:
-1. Set up project structure and dependencies
-2. Implement core data models (depends: 1)
-3. Implement API endpoints (depends: 1)
-4. Add tests and wire everything together (depends: 2, 3)"""
-
+"""
         try:
             return self._gemini.call(
                 system_prompt="You are a senior tech lead. Create numbered work orders with dependency annotations.",

@@ -144,6 +144,30 @@ Examples:
         )
 
         parser.add_argument(
+            "--llm-provider",
+            metavar="NAME",
+            help="LLM provider (claude, gemini, codex). Sets SF_LLM_PROVIDER."
+        )
+
+        parser.add_argument(
+            "--llm-model",
+            metavar="MODEL",
+            help="LLM model name (overrides SF_LLM_MODEL)."
+        )
+
+        parser.add_argument(
+            "--llm-endpoint",
+            metavar="URL",
+            help="LLM endpoint/base URL (overrides OPENAI_API_BASE for codex)."
+        )
+
+        parser.add_argument(
+            "--llm-api-key",
+            metavar="KEY",
+            help="LLM API key (sets OPENAI_API_KEY/CODEX_API_KEY or provider-specific key)."
+        )
+
+        parser.add_argument(
             "--screenshot",
             nargs=2,
             metavar=("PATH", "DESCRIPTION"),
@@ -156,6 +180,32 @@ Examples:
             action="append",
             metavar="PATH",
             help="Add screenshot to current session (repeatable): --add-screenshot img1.png --add-screenshot img2.jpg"
+        )
+
+        parser.add_argument(
+            "--workorder-type",
+            metavar="TYPE",
+            choices=["bespoke", "github", "jira", "backlog"],
+            help="Work order type. Activates ShopFloor pipeline. bespoke=free text, github=issue/PR ref, jira=ticket ref"
+        )
+
+        parser.add_argument(
+            "--workorder-content",
+            metavar="CONTENT",
+            help="Work order content (task description, issue URL, ticket ID). Overrides positional task arg."
+        )
+
+        parser.add_argument(
+            "--sop",
+            metavar="NAME",
+            help="SOP to attach to workstation (e.g. v0, hotfix, refactor). Default: v0 when --workorder-type is set"
+        )
+
+        parser.add_argument(
+            "--parallel",
+            type=int,
+            default=None,
+            help="Maximum parallel work orders per layer (enables ShopFloor when set)"
         )
         
         return parser.parse_args()
@@ -187,8 +237,10 @@ Examples:
         # Handle --add-screenshot - attach to task, not standalone
         # Screenshots will be attached when task runs
         
-        # Get task from either positional or -t/--task flag
-        if args.task_flag:
+        # Get task: --workorder-content > --task > positional
+        if args.workorder_content:
+            task = args.workorder_content
+        elif args.task_flag:
             task = args.task_flag
         elif args.task:
             task = " ".join(args.task)
@@ -438,6 +490,25 @@ Examples:
             print(f"Created working directory: {working_dir}")
         
         try:
+            # Work order mode activates ShopFloor pipeline
+            use_shopfloor = args.workorder_type is not None or (args.parallel is not None and args.parallel > 1)
+            if args.workorder_type is None and use_shopfloor:
+                args.workorder_type = "bespoke"
+            sop_name = args.sop
+            if use_shopfloor and not sop_name:
+                sop_name = "v0"
+
+            # Apply LLM provider overrides via env for downstream components
+            if args.llm_provider:
+                os.environ["SF_LLM_PROVIDER"] = args.llm_provider
+            if args.llm_model:
+                os.environ["SF_LLM_MODEL"] = args.llm_model
+            if args.llm_endpoint:
+                os.environ["OPENAI_API_BASE"] = args.llm_endpoint
+            if args.llm_api_key:
+                os.environ.setdefault("OPENAI_API_KEY", args.llm_api_key)
+                os.environ.setdefault("CODEX_API_KEY", args.llm_api_key)
+
             self.pa = PA(
                 working_dir=working_dir,
                 session_id=args.session,
@@ -448,6 +519,9 @@ Examples:
                 claude_bin=args.claude_bin,
                 context_type=args.context_type,
                 repo_url=args.repo_url or "",
+                use_shopfloor=use_shopfloor,
+                sop_name=sop_name,
+                parallel_limit=args.parallel,
             )
             
             # Attach screenshots if provided (--screenshot with description)
@@ -494,6 +568,7 @@ Examples:
                     "pa-thinking": "\033[34m│ 💭 THINKING │\033[0m",  # Blue
                     "pa-to-claude": "\033[32m\033[1m│ PA → Claude │\033[0m",  # Green bold
                     "telemetry":   "\033[2m│ 📊 OTEL     │\033[0m",  # Dim/grey
+                    "shopfloor":   "\033[33m│ ShopFloor   │\033[0m",  # Yellow
                 }
                 prefix = SOURCE_PREFIXES.get(source, SOURCE_PREFIXES["pa"])
                 

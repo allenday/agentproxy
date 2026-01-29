@@ -10,6 +10,7 @@ After each Claude iteration, PA thinks holistically and decides:
 """
 
 import json
+import os
 import socket
 import subprocess
 import time
@@ -28,6 +29,7 @@ from .telemetry import get_telemetry
 from .workstation import Workstation, create_workstation
 from .plugin_manager import PluginManager
 from .plugins.base import PluginHookPhase
+from .llm import get_provider, LLMRequest, LLMMessage
 
 
 class PADecision(str, Enum):
@@ -77,15 +79,19 @@ class PA:
         workstation: Optional[Workstation] = None,
         context_type: str = "auto",
         repo_url: str = "",
+        use_shopfloor: bool = False,
+        sop_name: Optional[str] = None,
+        parallel_limit: Optional[int] = None,
     ) -> None:
         self.working_dir = working_dir
         self.auto_verify = auto_verify
         self.auto_qa = auto_qa
-        self.claude_bin = claude_bin or "claude"
+        self.claude_bin = claude_bin or os.getenv("CLAUDE_BIN") or "claude"
 
         # Workstation: isolated execution environment with VCS management
         self._workstation = workstation or create_workstation(
             working_dir, context_type=context_type, repo_url=repo_url,
+            sop_name=sop_name,
         )
 
         self.agent = PAAgent(working_dir, session_id, user_mission, context_dir)
@@ -101,9 +107,26 @@ class PA:
         self._plugin_manager = PluginManager()
         self._plugin_manager.initialize_plugins(self)
 
+        # Wire plugin manager into FunctionExecutor for ON_FUNCTION_PRE/POST hooks
+        self.agent.executor._plugin_manager = self._plugin_manager
+
         # Track the original task and last valid instruction for error recovery
         self._original_task: str = ""
         self._last_valid_instruction: str = ""
+
+        # ShopFloor mode: parallel work order orchestration
+        self._use_shopfloor = use_shopfloor
+        self._shopfloor = None
+        if use_shopfloor:
+            from .shopfloor import ShopFloor
+            from .workstation.quality_gate import VerificationGate
+            self._shopfloor = ShopFloor(pa=self)
+            if parallel_limit and parallel_limit > 0:
+                self._shopfloor.parallel_limit = parallel_limit
+            self._shopfloor.quality_gates.append(VerificationGate())
+
+        # LLM provider selection (claude default)
+        self._llm_provider = os.getenv("SF_LLM_PROVIDER", "claude_cli")
     
     @property
     def memory(self) -> PAMemory:
@@ -196,6 +219,17 @@ class PA:
             tool_input = item.get("input", {})
             enrichment = process_tool_event(tool_name, tool_input)
 
+            # Plugin hook: ON_FILE_CHANGE for file-modifying tools (Phase 6)
+            if tool_name in ("Write", "Edit", "NotebookEdit"):
+                file_path = tool_input.get("file_path", tool_input.get("path", ""))
+                change_type = "create" if tool_name == "Write" else "modify"
+                self._plugin_manager.trigger_hook(
+                    PluginHookPhase.ON_FILE_CHANGE,
+                    tool_name=tool_name,
+                    file_path=file_path,
+                    change_type=change_type,
+                )
+
             if enrichment and enrichment.labels:
                 telemetry.tool_executions.add(1, {
                     "tool_name": tool_name,
@@ -275,6 +309,23 @@ class PA:
             yield self._emit("Starting task...", EventType.STARTED)
             yield from self._setup_task_breakdown(task)
 
+            # ShopFloor mode: delegate to produce() pipeline
+            if self._use_shopfloor and self._shopfloor is not None:
+                breakdown_text = self.agent.load_task_breakdown()
+                if breakdown_text:
+                    yield self._emit("[PA] ShopFloor mode — delegating to produce()", EventType.TEXT, source="pa")
+                    yield from self._shopfloor.produce(task, breakdown_text, max_iterations)
+                    self._state = ControllerState.DONE
+                    yield self._emit("Task completed (ShopFloor)", EventType.COMPLETED)
+                    if span:
+                        telemetry.tasks_completed.add(1, {"status": "completed"})
+                        telemetry.task_duration.record(time.time() - task_start_time)
+                        span.set_attribute("pa.status", "completed")
+                        span.set_attribute("pa.mode", "shopfloor")
+                        span.end()
+                        telemetry.active_sessions.add(-1)
+                    return
+
             if self._previous_summary:
                 yield self._emit(f"[PA] Resuming session", EventType.THINKING, source="pa-thinking")
 
@@ -289,19 +340,20 @@ class PA:
                     progress = self.agent.review_task_progress()
                     yield self._emit(f"[PA Tasks] {progress}", EventType.THINKING, source="pa-thinking")
 
-                yield self._emit(f"[Iteration {iteration + 1}] Executing Claude...", EventType.TEXT)
+                yield self._emit(f"[Iteration {iteration + 1}] Executing worker ({self._llm_provider})...", EventType.TEXT)
 
-                # Show what PA is sending to Claude BEFORE execution (full text)
+                # Show what PA is sending BEFORE execution (full text)
                 yield self._emit(current_instruction, EventType.TEXT, source="pa-to-claude")
 
-                claude_output_lines = []
-                for event in self._stream_claude(current_instruction, iteration=iteration):
+                worker_output_lines = []
+                stream_fn = self._stream_claude if self._llm_provider == "claude_cli" else self._stream_provider
+                for event in stream_fn(current_instruction, iteration=iteration):
                     yield event
                     if event.content:
-                        claude_output_lines.append(event.content)
+                        worker_output_lines.append(event.content)
 
-                claude_output = "\n".join(claude_output_lines)
-                self._claude_output_buffer.append(claude_output)
+                worker_output = "\n".join(worker_output_lines)
+                self._claude_output_buffer.append(worker_output)
 
                 changed_files = self._file_tracker.get_changed_files()
                 if changed_files:
@@ -461,6 +513,16 @@ class PA:
         telemetry = get_telemetry()
         self._file_tracker.reset()
 
+        # Plugin hook: ON_CLAUDE_START (Phase 6)
+        self._plugin_manager.trigger_hook(
+            PluginHookPhase.ON_CLAUDE_START,
+            instruction=instruction[:500],
+            iteration=iteration,
+            working_dir=working_dir or self.working_dir,
+        )
+
+        _claude_event_count = 0
+
         # Start OTEL span for Claude subprocess if enabled
         if telemetry.enabled and telemetry.tracer:
             import os
@@ -503,6 +565,7 @@ class PA:
                     self._file_tracker.process_event(data)
                     self._process_tool_enrichments(data)
                     for event in self._parse_claude_event(data):
+                        _claude_event_count += 1
                         yield event
                 except json.JSONDecodeError:
                     yield self._emit(line, EventType.RAW, source="claude")
@@ -513,6 +576,14 @@ class PA:
                 claude_span.set_attribute("claude.completed", True)
                 claude_span.end()
                 telemetry.log(f"Ended span 'claude.subprocess' (iteration={iteration})")
+
+            # Plugin hook: ON_CLAUDE_COMPLETE (Phase 6)
+            self._plugin_manager.trigger_hook(
+                PluginHookPhase.ON_CLAUDE_COMPLETE,
+                instruction=instruction[:500],
+                event_count=_claude_event_count,
+                working_dir=working_dir or self.working_dir,
+            )
 
         except subprocess.TimeoutExpired:
             process.kill()
@@ -603,6 +674,89 @@ class PA:
             if isinstance(v, str) and v:
                 return v[:40]
         return ""
+
+    def _stream_provider(self, instruction: str, iteration: int = 0, working_dir: Optional[str] = None) -> Generator[OutputEvent, None, None]:
+        """Stream non-Claude provider output by applying generated files."""
+        working_dir = working_dir or self.working_dir
+        telemetry = get_telemetry()
+        self._file_tracker.reset()
+
+        if telemetry.enabled and telemetry.tracer:
+            span = telemetry.tracer.start_span(
+                "llm.call",
+                attributes={
+                    "llm.provider": self._llm_provider,
+                    "sf.iteration": iteration,
+                },
+            )
+        else:
+            span = None
+
+        try:
+            provider = get_provider(self._llm_provider)
+        except Exception as e:
+            yield self._emit(f"[Worker] Provider error: {e}", EventType.ERROR, source="pa")
+            if span:
+                span.set_attribute("llm.error", str(e)[:200])
+                span.end()
+            return
+
+        system_prompt = (
+            "You are a coding agent. Return ONLY JSON with a 'files' array; "
+            "each entry has 'path' (relative to cwd) and 'content'. "
+            "Project root is current working directory. "
+            "Keep code minimal and runnable. No prose."
+        )
+        messages = [
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=instruction),
+        ]
+        request = LLMRequest(messages=messages, model=os.getenv("SF_LLM_MODEL"), provider=self._llm_provider)
+
+        try:
+            result = provider.generate(request)
+            if span:
+                if result.prompt_tokens:
+                    span.set_attribute("llm.prompt_tokens", result.prompt_tokens)
+                if result.completion_tokens:
+                    span.set_attribute("llm.completion_tokens", result.completion_tokens)
+                if result.model:
+                    span.set_attribute("llm.model", result.model)
+        except Exception as e:
+            yield self._emit(f"[Worker] Call failed: {e}", EventType.ERROR, source="pa")
+            if span:
+                span.set_attribute("llm.error", str(e)[:200])
+                span.end()
+            return
+
+        files = []
+        try:
+            data = json.loads(result.text)
+            files = data.get("files", [])
+        except Exception:
+            files = []
+
+        if not files:
+            yield self._emit("[Worker] No files returned by provider", EventType.ERROR, source="pa")
+            if span:
+                span.end()
+            return
+
+        changed = []
+        for fobj in files:
+            path = fobj.get("path")
+            content = fobj.get("content", "")
+            if not path:
+                continue
+            abs_path = Path(working_dir) / path
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            abs_path.write_text(content)
+            changed.append(str(abs_path.relative_to(working_dir)))
+
+        yield self._emit(f"[Worker] Wrote {len(changed)} files: {', '.join(changed[:5])}", EventType.TOOL_RESULT, source="pa")
+
+        if span:
+            span.end()
     
     def _setup_task_breakdown(self, task: str) -> Generator[OutputEvent, None, None]:
         existing = self.agent.load_task_breakdown()
