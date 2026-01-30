@@ -90,6 +90,7 @@ def create_workstation(
     elif context_type == "git_worktree":
         from .fixtures.git_worktree import GitWorktreeFixture
         wt_path = worktree_path or working_dir
+        user_set_path = bool(worktree_path) or (working_dir not in ("", ".", None))
         # Try to infer branch from existing worktree; if absent, derive from folder name or session_id.
         if not branch:
             try:
@@ -122,7 +123,7 @@ def create_workstation(
                 parent = os.path.dirname(os.path.abspath(wt_path))
 
         # If worktree path was not provided, place it under parent/.worktrees with session-aware suffix.
-        if not worktree_path:
+        if not user_set_path:
             token = session_id or uuid.uuid4().hex[:6]
             inferred_name = f"{os.path.basename(branch).replace('/', '-')}-{token}"
             wt_path = os.path.join(parent, ".worktrees", inferred_name)

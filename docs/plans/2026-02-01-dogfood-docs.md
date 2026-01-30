@@ -26,11 +26,11 @@ acceptance:
   - Frontmatter snippet is valid YAML and lists required keys.
   - Describes how to run quick smoke vs full test battery.
 work_orders:
-  - [WO-1] Add/update docs/fast-dogfood.md (or similar) with quickstart steps, env flags, and smoke command. [deps: none]
-  - [WO-2] Insert a concise Operator Quickstart section into AGENTS.md linking to the doc and the toy smoke plan. [deps: WO-1]
-  - [WO-3] Include the frontmatter template snippet (vcs/llm/telemetry) and explain fail-fast messages. [deps: WO-1]
-  - [WO-4] Add guidance for pytest scoping (quick vs full) tied to plans. [deps: WO-1]
-  - [WO-5] Verify markdown formatting; no code changes outside docs. [deps: WO-1, WO-2, WO-3, WO-4]
+  - "WO-1: Add/update docs/fast-dogfood.md (or similar) with quickstart steps, env flags, and smoke command. [deps: none]"
+  - "WO-2: Insert a concise Operator Quickstart section into AGENTS.md linking to the doc and the toy smoke plan. [deps: WO-1]"
+  - "WO-3: Include the frontmatter template snippet (vcs/llm/telemetry) and explain fail-fast messages. [deps: WO-1]"
+  - "WO-4: Add guidance for pytest scoping (quick vs full) tied to plans. [deps: WO-1]"
+  - "WO-5: Verify markdown formatting; no code changes outside docs. [deps: WO-1, WO-2, WO-3, WO-4]"
 ---
 
 # OTEL Dogfood Docs Task
