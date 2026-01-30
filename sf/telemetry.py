@@ -191,7 +191,7 @@ if OTEL_AVAILABLE:
                 print(f"\033[2m│ 📊 OTEL     │\033[0m {message}")
             if self.loki:
                 try:
-                    self.loki.push({\"level\": \"info\", \"msg\": message})
+                    self.loki.push({"level": "info", "msg": message})
                 except Exception:
                     pass
 
