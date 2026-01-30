@@ -36,7 +36,7 @@ except ImportError as e:
 
 RE_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
-REQUIRED_SECTIONS = ["workstation", "workstation.vcs", "workstation.runtime", "workstation.tooling", "workstation.telemetry", "workstation.llm"]
+REQUIRED_SECTIONS = ["workstation", "workstation.vcs"]
 
 DEFAULT_RUNTIME_TEMPLATE = {
     "python-venv": {
@@ -122,29 +122,14 @@ def validate_frontmatter(meta: Dict[str, Any]) -> None:
     if vcs_type not in {"git_repo", "git_worktree", "git_clone", "local"}:
         raise FrontmatterError("workstation.vcs.type must be one of git_repo, git_worktree, git_clone, local")
     if vcs_type == "git_worktree":
-        for field in ("parent", "worktree", "branch"):
-            if not vcs.get(field):
-                raise FrontmatterError(f"workstation.vcs.{field} is required for git_worktree")
+        # parent/worktree/branch may be auto-inferred; no hard requirement
+        if not vcs.get("parent"):
+            # parent can be inferred from cwd; allow omission
+            pass
     if vcs_type == "git_clone" and not vcs.get("repo_url"):
         raise FrontmatterError("workstation.vcs.repo_url is required for git_clone")
 
-    runtime = _get(meta, "workstation.runtime") or {}
-    rt_template = runtime.get("template")
-    if rt_template not in {"python-venv"}:
-        raise FrontmatterError("workstation.runtime.template must be 'python-venv'")
-    # deps and venv defaults can be applied later; no hard requirement here
-
-    tooling = _get(meta, "workstation.tooling") or {}
-    if not tooling.get("tests"):
-        raise FrontmatterError("workstation.tooling.tests is required")
-
-    telemetry = _get(meta, "workstation.telemetry") or {}
-    if not telemetry.get("template"):
-        raise FrontmatterError("workstation.telemetry.template is required")
-
-    llm = _get(meta, "workstation.llm") or {}
-    if not llm.get("template") and not llm.get("provider"):
-        raise FrontmatterError("workstation.llm.template or workstation.llm.provider is required")
+    # runtime/tooling/telemetry/llm are optional; defaults applied in expand_templates
 
 
 def expand_templates(meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -152,8 +137,8 @@ def expand_templates(meta: Dict[str, Any]) -> Dict[str, Any]:
     wm = dict(meta.get("workstation", {}))
 
     # Runtime
-    runtime = dict(wm.get("runtime", {}))
-    rt_template = runtime.get("template")
+    runtime = dict(wm.get("runtime", {})) or {"template": "python-venv"}
+    rt_template = runtime.get("template", "python-venv")
     if rt_template in DEFAULT_RUNTIME_TEMPLATE:
         defaults = DEFAULT_RUNTIME_TEMPLATE[rt_template]
         for k, v in defaults.items():
@@ -161,8 +146,8 @@ def expand_templates(meta: Dict[str, Any]) -> Dict[str, Any]:
     wm["runtime"] = runtime
 
     # Telemetry
-    telemetry = dict(wm.get("telemetry", {}))
-    t_template = telemetry.get("template")
+    telemetry = dict(wm.get("telemetry", {})) or {"template": "none"}
+    t_template = telemetry.get("template", "none")
     if t_template in DEFAULT_TELEMETRY_TEMPLATE:
         defaults = DEFAULT_TELEMETRY_TEMPLATE[t_template]
         for k, v in defaults.items():
@@ -171,12 +156,18 @@ def expand_templates(meta: Dict[str, Any]) -> Dict[str, Any]:
 
     # LLM
     llm = dict(wm.get("llm", {}))
+    if not llm:
+        llm = {"template": "codex_cli_default"}
     l_template = llm.get("template")
     if l_template in DEFAULT_LLM_TEMPLATE:
         defaults = DEFAULT_LLM_TEMPLATE[l_template]
         for k, v in defaults.items():
             llm.setdefault(k, v)
     wm["llm"] = llm
+
+    # Tooling defaults to empty dict
+    tooling = dict(wm.get("tooling", {}))
+    wm["tooling"] = tooling
 
     out = dict(meta)
     out["workstation"] = wm
