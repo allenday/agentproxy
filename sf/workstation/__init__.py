@@ -51,6 +51,7 @@ def create_workstation(
     parent_path: str = "",
     worktree_path: str = "",
     branch: str = "",
+    session_id: str = "",
     capabilities: dict = None,
     hooks: list = None,
     sop_name: str = None,
@@ -76,6 +77,7 @@ def create_workstation(
     Returns:
         Configured Workstation instance (not yet commissioned).
     """
+    import uuid
     capabilities = capabilities or {}
     hooks = hooks or []
 
@@ -88,7 +90,7 @@ def create_workstation(
     elif context_type == "git_worktree":
         from .fixtures.git_worktree import GitWorktreeFixture
         wt_path = worktree_path or working_dir
-        # Try to infer branch from existing worktree; if absent, derive from folder name.
+        # Try to infer branch from existing worktree; if absent, derive from folder name or session_id.
         if not branch:
             try:
                 branch = (
@@ -101,8 +103,9 @@ def create_workstation(
             except Exception:
                 pass
         if not branch:
-            import uuid
-            branch = f"sf/{os.path.basename(wt_path.rstrip('/')) or 'auto'}-{uuid.uuid4().hex[:6]}"
+            token = session_id or uuid.uuid4().hex[:6]
+            folder = os.path.basename(wt_path.rstrip("/")) or "auto"
+            branch = f"sf/{folder}-{token}"
 
         # Determine parent repo path
         parent = parent_path
@@ -117,6 +120,12 @@ def create_workstation(
                 )
             except Exception:
                 parent = os.path.dirname(os.path.abspath(wt_path))
+
+        # If worktree path was not provided, place it under parent/.worktrees with session-aware suffix.
+        if not worktree_path:
+            token = session_id or uuid.uuid4().hex[:6]
+            inferred_name = f"{os.path.basename(branch).replace('/', '-')}-{token}"
+            wt_path = os.path.join(parent, ".worktrees", inferred_name)
 
         fixture = GitWorktreeFixture(parent_path=parent, worktree_path=wt_path, branch=branch)
     elif context_type == "local":

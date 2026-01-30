@@ -88,6 +88,9 @@ class PA:
         self.auto_qa = auto_qa
         self.claude_bin = claude_bin or os.getenv("CLAUDE_BIN") or "claude"
 
+        # Seed a session id early so fixtures can name resources (e.g., worktrees).
+        provisional_session = session_id or str(uuid.uuid4())[:8]
+
         # Workstation: isolated execution environment with VCS management
         if context_type is None:
             raise ValueError("context_type is required (local, git_repo, git_worktree, git_clone)")
@@ -96,9 +99,10 @@ class PA:
             context_type=context_type,
             repo_url=repo_url,
             sop_name=sop_name,
+            session_id=provisional_session,
         )
 
-        self.agent = PAAgent(working_dir, session_id, user_mission, context_dir)
+        self.agent = PAAgent(working_dir, provisional_session, user_mission, context_dir)
         self._display = create_display(display_mode)
         self._file_tracker = FileChangeTracker(working_dir)
 
