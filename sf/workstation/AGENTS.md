@@ -1,5 +1,17 @@
 # sf/workstation/ — Execution Environment
 
+Purpose: Provision isolated execution (fixtures), materialize SOPs, and run verification gates.
+
+Main entry points:
+- `create_workstation()` in `__init__.py`
+- `Workstation` in `workstation.py`
+
+Where to look:
+- **Fixtures:** `fixtures/` (worktree, repo, clone, local)
+- **SOP registry:** `sop.py`
+- **Verification gates:** `quality_gate.py`
+- **Telemetry:** `sf/telemetry.py` and `sf/event_processors/`
+
 Isolated execution environment. HAS-A Fixture (VCS), HAS-A SOP (methodology), manages lifecycle.
 
 ## Ownership

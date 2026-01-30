@@ -1,5 +1,15 @@
 # sf/shopfloor/ — Parallel Orchestration
 
+Purpose: Route and execute Work Orders across worktrees with quality gates and Kaizen feedback.
+
+Main entry points:
+- `ShopFloor.produce()` in `shopfloor.py`
+- `parse_work_orders()` / `build_layers()` in `routing.py`
+
+Where to look:
+- **SOP + fixtures:** `sf/workstation/` (commissioning + verification)
+- **Telemetry:** `sf/telemetry.py` and `sf/event_processors/`
+
 BOM decomposition → layer routing → parallel dispatch → quality gates → assembly → Kaizen rework.
 
 ## Pipeline

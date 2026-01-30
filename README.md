@@ -64,6 +64,21 @@ Create a `.env` file with your API key:
 echo "GEMINI_API_KEY=your_key" > .env
 ```
 
+## Fast path to dogfood
+
+Use the validated Codex CLI command and the smoke plan for a one-shot run:
+
+```bash
+SF_LLM_PROVIDER=codex_cli \
+SF_CODEX_FLAGS="--full-auto --sandbox workspace-write" \
+SF_CODEX_TIMEOUT=240 \
+sf --context-type git_worktree \
+  --workorder-type file \
+  --workorder-content docs/plans/2026-01-31-toy-fib.md
+```
+
+See `docs/fast-dogfood.md` for required frontmatter, fail-fast errors, and pytest scoping.
+
 ## Usage
 
 ### Mode 1: CLI

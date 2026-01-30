@@ -1,5 +1,16 @@
 # sf/ — Core Package
 
+Purpose: PA supervisor core, CLI/server entry points, and shared runtime services.
+
+Main entry points:
+- `sf.cli:main` (`sf` CLI)
+- `sf.server:app` (FastAPI server)
+- `sf.pa.PA` (supervisor loop)
+
+Where to look:
+- **SOP + fixtures:** `sf/workstation/` (see `sf/workstation/AGENTS.md`)
+- **Telemetry:** `sf/telemetry.py` and `sf/event_processors/`
+
 ## Files
 
 | File | Role |
