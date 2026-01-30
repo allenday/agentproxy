@@ -84,13 +84,20 @@ class PA:
         sop_name: Optional[str] = None,
         parallel_limit: Optional[int] = None,
     ) -> None:
+        # Detect if caller explicitly set working_dir; default sandbox should not block auto worktree selection.
+        user_set_workdir = working_dir not in (None, "", "./sandbox", "sandbox")
+
+        # Seed a session id early so fixtures can name resources (e.g., worktrees).
+        provisional_session = session_id or str(uuid.uuid4())[:8]
+
+        # For git_worktree, allow auto-generated worktree path when user didn't set one.
+        if context_type == "git_worktree" and not user_set_workdir:
+            working_dir = ""
+
         self.working_dir = working_dir
         self.auto_verify = auto_verify
         self.auto_qa = auto_qa
         self.claude_bin = claude_bin or os.getenv("CLAUDE_BIN") or "claude"
-
-        # Seed a session id early so fixtures can name resources (e.g., worktrees).
-        provisional_session = session_id or str(uuid.uuid4())[:8]
 
         # Workstation: isolated execution environment with VCS management
         if context_type is None:
@@ -103,9 +110,17 @@ class PA:
             session_id=provisional_session,
         )
 
-        self.agent = PAAgent(working_dir, provisional_session, user_mission, context_dir)
+        # If worktree path was auto-generated, update working_dir to the fixture path.
+        try:
+            if context_type == "git_worktree" and not user_set_workdir:
+                if hasattr(self._workstation.fixture, "path"):
+                    self.working_dir = self._workstation.fixture.path
+        except Exception:
+            pass
+
+        self.agent = PAAgent(self.working_dir, provisional_session, user_mission, context_dir)
         self._display = create_display(display_mode)
-        self._file_tracker = FileChangeTracker(working_dir)
+        self._file_tracker = FileChangeTracker(self.working_dir)
 
         self._state = ControllerState.IDLE
         self._claude_output_buffer: List[str] = []
