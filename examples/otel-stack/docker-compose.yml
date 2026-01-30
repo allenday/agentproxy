@@ -68,6 +68,34 @@ services:
     networks:
       - otel
 
+  # Ubuntu runner (optional): use to execute sf inside the stack for sandbox-free smoke tests
+  ubuntu-runner:
+    image: ubuntu:22.04
+    tty: true
+    stdin_open: true
+    working_dir: /workspace
+    volumes:
+      - ../..:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SF_ENABLE_TELEMETRY=1
+      - SF_TELEMETRY_VERBOSE=1
+      - SF_LOKI_ENABLED=true
+      - SF_LOKI_ENDPOINT=http://loki:3100
+      - SF_LOKI_LABELS=service=sf,component=worker
+      - SF_LOKI_TIMEOUT_S=5
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=sf
+      - SF_ROLE=worker
+      - SF_LLM_PROVIDER=codex_cli
+      - SF_CODEX_FLAGS=--full-auto --sandbox workspace-write
+      - SF_CODEX_TIMEOUT=240
+    networks:
+      - otel
+
 volumes:
   prometheus-data:
   grafana-data:
