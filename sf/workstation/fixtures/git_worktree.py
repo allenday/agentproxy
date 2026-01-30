@@ -12,6 +12,7 @@ Local parallelism via `git worktree add`. Created by GitRepoFixture.fork().
 
 import os
 import subprocess
+import uuid
 from typing import Any, Dict, Optional
 
 from .base import Fixture
@@ -59,8 +60,12 @@ class GitWorktreeFixture(Fixture):
         if not os.path.exists(parent_git_dir):
             raise RuntimeError(f"Parent path is not a git repo: {self._parent_path}")
 
-        # Choose add command depending on whether branch already exists
+        # Resolve branch collisions: if branch already in use by another worktree, fork a new branch.
         branch_exists = self._branch_exists()
+        if branch_exists and self._branch_in_use_elsewhere():
+            self._branch = f"{self._branch}-{uuid.uuid4().hex[:6]}"
+            branch_exists = False  # new branch to be created
+
         cmd = ["worktree", "add"]
         if not branch_exists:
             cmd += ["-b", self._branch, self._worktree_path, "HEAD"]
@@ -215,3 +220,24 @@ class GitWorktreeFixture(Fixture):
             return True
         except subprocess.CalledProcessError:
             return False
+
+    def _branch_in_use_elsewhere(self) -> bool:
+        """Return True if the branch is already attached to another worktree."""
+        try:
+            output = self._parent_git("worktree", "list", "--porcelain")
+        except subprocess.CalledProcessError:
+            return False
+        current_path = os.path.abspath(self._worktree_path)
+        path = None
+        branch = None
+        for line in output.splitlines():
+            if line.startswith("worktree "):
+                path = os.path.abspath(line.split(" ", 1)[1].strip())
+            elif line.startswith("branch "):
+                branch = line.split(" ", 1)[1].strip()
+                if path and branch:
+                    if branch == f"refs/heads/{self._branch}" and path != current_path:
+                        return True
+                    path = None
+                    branch = None
+        return False
