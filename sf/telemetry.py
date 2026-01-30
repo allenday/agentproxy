@@ -9,6 +9,7 @@ If OTEL packages are not installed, telemetry is gracefully disabled.
 import os
 from typing import Optional
 import socket
+from .telemetry_loki import get_loki_client
 
 # Try to import OTEL packages - they're optional
 try:
@@ -57,6 +58,7 @@ class NoOpTelemetry:
         self.enabled = False
         self.tracer = None
         self.meter = None
+        self.loki = None
 
     def instrument_fastapi(self, app):
         """No-op FastAPI instrumentation."""
@@ -72,6 +74,7 @@ if OTEL_AVAILABLE:
             self.verbose = os.getenv("SF_TELEMETRY_VERBOSE", "0") == "1"
             self.tracer: Optional[trace.Tracer] = None
             self.meter: Optional[metrics.Meter] = None
+            self.loki = get_loki_client()
 
             # Print telemetry status
             if self.enabled:
@@ -186,6 +189,11 @@ if OTEL_AVAILABLE:
             """Log telemetry message if verbose enabled."""
             if self.verbose:
                 print(f"\033[2m│ 📊 OTEL     │\033[0m {message}")
+            if self.loki:
+                try:
+                    self.loki.push({\"level\": \"info\", \"msg\": message})
+                except Exception:
+                    pass
 
         def _init_metrics(self):
             """Create metric instruments"""
