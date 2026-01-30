@@ -15,6 +15,7 @@ import subprocess
 from typing import Any, Dict, Optional
 
 from .base import Fixture
+from .gitignore import ensure_gitignore
 
 
 class GitWorktreeFixture(Fixture):
@@ -37,12 +38,26 @@ class GitWorktreeFixture(Fixture):
             Absolute path to the worktree directory.
         """
         if os.path.isdir(self._worktree_path):
+            ensure_gitignore(
+                self._worktree_path,
+                [
+                    ".claude/",
+                    "CLAUDE.md",
+                ],
+            )
             return self._worktree_path
 
         # Create worktree with new branch from HEAD of parent
         self._parent_git(
             "worktree", "add", "-b", self._branch,
             self._worktree_path, "HEAD",
+        )
+        ensure_gitignore(
+            self._worktree_path,
+            [
+                ".claude/",
+                "CLAUDE.md",
+            ],
         )
         return self._worktree_path
 

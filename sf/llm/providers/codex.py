@@ -87,12 +87,22 @@ class CodexCLIProvider(LLMProvider):
             "CODEX_SESSION_DIR",
             os.path.join(os.getcwd(), "sandbox", ".codex", "sessions"),
         )
-        # Max wall time; allow override. Default 180s to accommodate Codex bootstrap.
-        self.exec_timeout = int(os.getenv("SF_CODEX_TIMEOUT", "180"))
+        # Max wall time; allow override. Default 600s to accommodate longer codegen.
+        self.exec_timeout = int(os.getenv("SF_CODEX_TIMEOUT", "600"))
+        # Extra CLI flags. Default to a permissive workspace-write sandbox.
+        raw_flags = os.getenv("SF_CODEX_FLAGS", "--full-auto --sandbox workspace-write")
+        self.extra_flags = shlex.split(raw_flags) if raw_flags else []
 
-    def _build_cmd(self, messages: str, workdir: str) -> List[str]:
+    def _build_cmd(self, workdir: str, messages: str) -> List[str]:
+        """Build codex exec command; prompt passed as single positional arg."""
+        flags = self.extra_flags or []
         if self.use_ssh:
-            remote_cmd = f"cd {shlex.quote(workdir)} && SF_WORKDIR={shlex.quote(workdir)} {shlex.quote(self.codex_bin)} exec --json {shlex.quote(messages)}"
+            flag_str = " ".join(shlex.quote(f) for f in flags)
+            remote_cmd = (
+                f"cd {shlex.quote(workdir)} && "
+                f"SF_WORKDIR={shlex.quote(workdir)} "
+                f"{shlex.quote(self.codex_bin)} exec --json {flag_str} {shlex.quote(messages)}"
+            )
             ssh_base = [
                 "ssh",
                 "-o", "BatchMode=yes",
@@ -101,13 +111,14 @@ class CodexCLIProvider(LLMProvider):
                 self.ssh_host,
             ]
             return ssh_base + [remote_cmd]
-        return [self.codex_bin, "exec", "--json", messages]
+        return [self.codex_bin, "exec", "--json", *flags, messages]
 
     def generate(self, request: LLMRequest) -> LLMResult:
         # Combine system + user messages so Codex CLI sees formatting instructions
         messages = "\n".join([m.content for m in request.messages])
         workdir = os.getenv("SF_WORKDIR", os.getcwd())
-        cmd = self._build_cmd(messages, workdir)
+        cmd = self._build_cmd(workdir, messages)
+        stdin_data = None
         env = os.environ.copy()
         if self.session_dir:
             os.makedirs(self.session_dir, exist_ok=True)
@@ -121,11 +132,12 @@ class CodexCLIProvider(LLMProvider):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                stdin=subprocess.PIPE if stdin_data is not None else None,
                 cwd=None if self.use_ssh else workdir,
                 env=env,
             )
             try:
-                raw_out, raw_err = proc.communicate(timeout=self.exec_timeout)
+                raw_out, raw_err = proc.communicate(input=stdin_data, timeout=self.exec_timeout)
                 timed_out = False
             except subprocess.TimeoutExpired:
                 proc.kill()

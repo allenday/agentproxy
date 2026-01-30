@@ -106,6 +106,17 @@ class Workstation:
                 for err in errors:
                     logger.warning("SOP pre-condition: %s", err)
 
+        # Runtime provisioning (optional, set by factory)
+        runtime_config = getattr(self, "runtime_config", None)
+        if runtime_config:
+            try:
+                from .runtime import provision_runtime
+                provision_runtime(path, runtime_config)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning("Runtime provision failed: %s", e)
+
         self.state = WorkstationState.READY
 
         # Record OTEL workstation setup time

@@ -77,7 +77,7 @@ class PA:
         context_dir: Optional[str] = None,
         claude_bin: Optional[str] = None,
         workstation: Optional[Workstation] = None,
-        context_type: str = "auto",
+        context_type: Optional[str] = None,
         repo_url: str = "",
         use_shopfloor: bool = False,
         sop_name: Optional[str] = None,
@@ -89,8 +89,12 @@ class PA:
         self.claude_bin = claude_bin or os.getenv("CLAUDE_BIN") or "claude"
 
         # Workstation: isolated execution environment with VCS management
+        if context_type is None:
+            raise ValueError("context_type is required (local, git_repo, git_worktree, git_clone)")
         self._workstation = workstation or create_workstation(
-            working_dir, context_type=context_type, repo_url=repo_url,
+            working_dir,
+            context_type=context_type,
+            repo_url=repo_url,
             sop_name=sop_name,
         )
 

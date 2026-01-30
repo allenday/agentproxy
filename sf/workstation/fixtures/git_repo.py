@@ -15,6 +15,7 @@ import subprocess
 from typing import Any, Dict, Optional
 
 from .base import Fixture
+from .gitignore import ensure_gitignore
 
 
 class GitRepoFixture(Fixture):
@@ -55,6 +56,15 @@ class GitRepoFixture(Fixture):
                 self._branch = result.strip()
             except subprocess.CalledProcessError:
                 self._branch = "main"
+
+        # Baseline .gitignore to keep agent artifacts out of history
+        ensure_gitignore(
+            self._path,
+            [
+                ".claude/",
+                "CLAUDE.md",
+            ],
+        )
 
         return self._path
 

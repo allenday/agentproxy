@@ -125,9 +125,9 @@ Examples:
 
         parser.add_argument(
             "--context-type",
-            choices=["auto", "local", "git", "clone"],
-            default="auto",
-            help="Workstation fixture type (default: auto-detect)"
+            choices=["local", "git_repo", "git_worktree", "git_clone"],
+            required=True,
+            help="Workstation fixture type (explicit)"
         )
 
         parser.add_argument(
@@ -185,14 +185,14 @@ Examples:
         parser.add_argument(
             "--workorder-type",
             metavar="TYPE",
-            choices=["bespoke", "github", "jira", "backlog"],
-            help="Work order type. Activates ShopFloor pipeline. bespoke=free text, github=issue/PR ref, jira=ticket ref"
+            choices=["bespoke", "github", "jira", "backlog", "file"],
+            help="Work order type. 'file' loads CONTENT as a path and uses its contents."
         )
 
         parser.add_argument(
             "--workorder-content",
             metavar="CONTENT",
-            help="Work order content (task description, issue URL, ticket ID). Overrides positional task arg."
+            help="Work order content (task description, issue URL, ticket ID, or path to plan file). Overrides positional task arg."
         )
 
         parser.add_argument(
@@ -247,6 +247,19 @@ Examples:
         else:
             self._print_usage()
             return 1
+
+        # If workorder-type=file, load the path content or fail fast
+        if args.workorder_type == "file":
+            from pathlib import Path
+            p = Path(task)
+            if not p.is_file():
+                print(f"Error: workorder-type=file but path not found: {task}")
+                return 1
+            try:
+                task = p.read_text()
+            except Exception as e:
+                print(f"Error: failed to read workorder file {task}: {e}")
+                return 1
         
         # Setup signal handler
         def signal_handler(sig, frame):

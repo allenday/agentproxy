@@ -22,11 +22,18 @@ import time
 import os
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
 from ..models import EventType, OutputEvent
 from ..telemetry import get_telemetry
 from ..workstation.workstation import Workstation
+from ..workstation.frontmatter import (
+    parse_frontmatter,
+    validate_frontmatter,
+    expand_templates,
+    FrontmatterError,
+)
 from ..llm import get_provider, LLMRequest, LLMMessage
 from .analyzer import ResultAnalyzer
 from .assembly import AssemblyStation, IntegrationResult, IntegrationStatus
@@ -104,6 +111,19 @@ class ShopFloor:
         telemetry = get_telemetry()
         production_start = time.time()
 
+        # Frontmatter validation (fail fast)
+        fm = None
+        try:
+            meta, body = parse_frontmatter(task)
+            validate_frontmatter(meta)
+            fm = expand_templates(meta)
+            task_body = body
+        except FrontmatterError as e:
+            yield self._emit(f"[ShopFloor] Frontmatter error: {e}", event_type=EventType.ERROR)
+            return
+        except Exception:
+            task_body = task
+
         # Start OTEL span for production
         span = None
         if telemetry.enabled and telemetry.tracer:
@@ -122,7 +142,7 @@ class ShopFloor:
                 "[ShopFloor] No work orders parsed from breakdown. "
                 "Falling back to single work order.",
             )
-            bom = [WorkOrder(index=0, prompt=task)]
+            bom = [WorkOrder(index=0, prompt=task_body)]
 
         yield self._emit(
             f"[ShopFloor] Bill of Materials: {len(bom)} work orders",
@@ -151,7 +171,7 @@ class ShopFloor:
                 })
 
         # 3. Execute layers with Kaizen feedback loop
-        yield from self._execute_with_kaizen(layers, max_iterations)
+        yield from self._execute_with_kaizen(layers, max_iterations, fm=fm)
 
         # Record cycle time
         cycle_time = time.time() - production_start
@@ -168,6 +188,7 @@ class ShopFloor:
         self,
         layers: List[List[WorkOrder]],
         max_iterations: int,
+        fm: Optional[Dict[str, Any]] = None,
     ) -> Generator[OutputEvent, None, None]:
         """Execute layers with Kaizen feedback loop.
 
@@ -176,6 +197,24 @@ class ShopFloor:
         """
         telemetry = get_telemetry()
         parent_station = self.pa._workstation
+        # If frontmatter provided, rebuild workstation from it
+        if fm:
+            from ..workstation import create_workstation_from_frontmatter
+            try:
+                parent_station = create_workstation_from_frontmatter(
+                    self.pa.working_dir,
+                    fm,
+                    capabilities=None,
+                    hooks=None,
+                )
+                # Apply LLM provider from frontmatter if present
+                llm_cfg = getattr(parent_station, "llm_config", {}) if parent_station else {}
+                provider = llm_cfg.get("provider") or llm_cfg.get("template_provider")
+                if provider:
+                    self.pa._llm_provider = provider
+            except Exception as e:
+                yield self._emit(f"[ShopFloor] Failed to create workstation from frontmatter: {e}", event_type=EventType.ERROR)
+                return
         completed_results: List[WorkOrderResult] = []
         context_summaries: List[str] = []
         next_wo_index = max((wo.index for layer in layers for wo in layer), default=-1) + 1
@@ -561,21 +600,27 @@ class ShopFloor:
                 },
             )
 
-        # Build enriched prompt with context
-        prompt = wo.prompt
-        if prior_context:
-            context_str = "\n".join(
-                f"- {s}" for s in prior_context[-5:]  # Last 5 summaries
-            )
-            prompt = (
-                f"Context from prior work:\n{context_str}\n\n"
-                f"Current task:\n{prompt}"
-            )
+            # Build enriched prompt with context
+            prompt = wo.prompt
+            if prior_context:
+                context_str = "\n".join(
+                    f"- {s}" for s in prior_context[-5:]  # Last 5 summaries
+                )
+                prompt = (
+                    f"Context from prior work:\n{context_str}\n\n"
+                    f"Current task:\n{prompt}"
+                )
 
         # Execute using Claude subprocess on the station's working directory
         events: List[Dict] = []
         files_changed: List[str] = []
         summary = ""
+
+        # Prepare env overrides (telemetry, etc.)
+        env = None
+        if hasattr(station, "telemetry_env") and station.telemetry_env:
+            env = os.environ.copy()
+            env.update(station.telemetry_env)
 
         try:
             yield self._emit(
@@ -584,10 +629,10 @@ class ShopFloor:
 
             provider_name = getattr(self.pa, "_llm_provider", os.getenv("SF_LLM_PROVIDER", "claude_cli"))
             if provider_name.startswith("codex"):
-                files_changed = self._codex_generate_work(wo, station, prompt, provider_name)
+                files_changed = self._codex_generate_work(wo, station, prompt, provider_name, env=env)
             elif provider_name == "claude_cli":
                 # Stream Claude on the workstation
-                for event in self.pa._stream_claude(prompt, working_dir=station.path):
+                for event in self.pa._stream_claude(prompt, working_dir=station.path, env=env):
                     yield event
                     events.append({
                         "type": event.event_type.value,
@@ -777,7 +822,14 @@ class ShopFloor:
             metadata={"source": "shopfloor"},
         )
 
-    def _codex_generate_work(self, wo: WorkOrder, station: Workstation, prompt: str, provider_name: str = "codex_api") -> List[str]:
+    def _codex_generate_work(
+        self,
+        wo: WorkOrder,
+        station: Workstation,
+        prompt: str,
+        provider_name: str = "codex_api",
+        env: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
         """Use a provider that returns JSON {files: [{path, content}]} and apply to the workstation."""
         files_changed: List[str] = []
 
@@ -868,7 +920,16 @@ class ShopFloor:
                 os.chdir(station.path)
                 os.environ["SF_WORKDIR"] = station.path
                 try:
-                    result = provider.generate(req)
+                    # Inject env for Codex CLI if provided
+                    if env:
+                        old_env = os.environ.copy()
+                        os.environ.update(env)
+                    try:
+                        result = provider.generate(req)
+                    finally:
+                        if env:
+                            os.environ.clear()
+                            os.environ.update(old_env)
                 finally:
                     os.chdir(prev_cwd)
                     os.environ.pop("SF_WORKDIR", None)
