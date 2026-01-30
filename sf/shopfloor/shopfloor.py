@@ -28,12 +28,7 @@ from typing import Any, Dict, Generator, List, Optional
 from ..models import EventType, OutputEvent
 from ..telemetry import get_telemetry
 from ..workstation.workstation import Workstation
-from ..workstation.frontmatter import (
-    parse_frontmatter,
-    validate_frontmatter,
-    expand_templates,
-    FrontmatterError,
-)
+from ..orders import make_external_order, make_traveler, FrontmatterError
 from ..llm import get_provider, LLMRequest, LLMMessage
 from .analyzer import ResultAnalyzer
 from .assembly import AssemblyStation, IntegrationResult, IntegrationStatus
@@ -111,16 +106,15 @@ class ShopFloor:
         telemetry = get_telemetry()
         production_start = time.time()
 
-        # Frontmatter validation (fail fast)
+        # Frontmatter validation (user vs internal traveler)
         fm = None
         try:
-            meta, body = parse_frontmatter(task)
-            validate_frontmatter(meta)
-            fm = expand_templates(meta)
-            validate_internal(fm)
-            task_body = body
+            ext_order = make_external_order(task)
+            traveler = make_traveler(ext_order)
+            fm = traveler.meta
+            task_body = traveler.body
         except FrontmatterError as e:
-            yield self._emit(f"[ShopFloor] Frontmatter error: {e}", event_type=EventType.ERROR)
+            yield self._emit(f"[ShopFloor] Order error: {e}", event_type=EventType.ERROR)
             return
         except Exception:
             task_body = task
