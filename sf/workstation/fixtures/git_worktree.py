@@ -37,28 +37,44 @@ class GitWorktreeFixture(Fixture):
         Returns:
             Absolute path to the worktree directory.
         """
-        if os.path.isdir(self._worktree_path):
-            ensure_gitignore(
-                self._worktree_path,
-                [
-                    ".claude/",
-                    "CLAUDE.md",
-                ],
-            )
+        # Reuse if already registered as a worktree in the parent repo
+        if self._is_registered_worktree():
+            ensure_gitignore(self._worktree_path, [".claude/", "CLAUDE.md"])
             return self._worktree_path
 
-        # Create worktree with new branch from HEAD of parent
-        self._parent_git(
-            "worktree", "add", "-b", self._branch,
-            self._worktree_path, "HEAD",
-        )
-        ensure_gitignore(
-            self._worktree_path,
-            [
-                ".claude/",
-                "CLAUDE.md",
-            ],
-        )
+        # Bail out early if the path exists but is not a git worktree
+        if os.path.isdir(self._worktree_path):
+            git_dir = os.path.join(self._worktree_path, ".git")
+            if os.path.exists(git_dir):
+                # A git worktree (or repo) lives here; assume it is usable.
+                ensure_gitignore(self._worktree_path, [".claude/", "CLAUDE.md"])
+                return self._worktree_path
+            raise RuntimeError(
+                f"Worktree path exists but is not a git worktree: {self._worktree_path}. "
+                "Remove it or choose a different path."
+            )
+
+        # Verify parent is a git repo
+        parent_git_dir = os.path.join(self._parent_path, ".git")
+        if not os.path.exists(parent_git_dir):
+            raise RuntimeError(f"Parent path is not a git repo: {self._parent_path}")
+
+        # Choose add command depending on whether branch already exists
+        branch_exists = self._branch_exists()
+        cmd = ["worktree", "add"]
+        if not branch_exists:
+            cmd += ["-b", self._branch, self._worktree_path, "HEAD"]
+        else:
+            cmd += [self._worktree_path, self._branch]
+
+        try:
+            self._parent_git(*cmd)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"git worktree add failed for {self._worktree_path} (branch {self._branch}): {e.stderr or e.output}"
+            ) from e
+
+        ensure_gitignore(self._worktree_path, [".claude/", "CLAUDE.md"])
         return self._worktree_path
 
     def teardown(self) -> None:
@@ -179,3 +195,23 @@ class GitWorktreeFixture(Fixture):
                 stderr=result.stderr,
             )
         return result.stdout
+
+    def _is_registered_worktree(self) -> bool:
+        """Check if the worktree path is already registered with the parent repo."""
+        try:
+            output = self._parent_git("worktree", "list", "--porcelain")
+        except subprocess.CalledProcessError:
+            return False
+        for line in output.splitlines():
+            if line.startswith("worktree "):
+                path = line.split(" ", 1)[1].strip()
+                if os.path.abspath(path) == self._worktree_path:
+                    return True
+        return False
+
+    def _branch_exists(self) -> bool:
+        try:
+            self._parent_git("show-ref", "--verify", f"refs/heads/{self._branch}")
+            return True
+        except subprocess.CalledProcessError:
+            return False
