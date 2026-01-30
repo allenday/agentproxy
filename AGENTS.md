@@ -12,6 +12,14 @@ sf "task"                                                 # Direct PA mode
 sf-server                                                 # HTTP API + webhooks
 ```
 
+## Operator Quickstart (Codex CLI)
+
+For a one-shot, observable dogfood run with Codex CLI (workspace-write, 240s timeout), see:
+- `docs/fast-dogfood.md` (copy-paste command, required frontmatter keys, fail-fast errors)
+- 60-second smoke plan: `docs/plans/2026-01-31-toy-fib.md`
+
+Use the smoke plan for quick validation and scope pytest accordingly; use the full suite for pre-merge confidence.
+
 ## Data Model Rule
 
 Pydantic `BaseModel` for all domain models. `dataclass` only for event/result structs (`OutputEvent`, `InspectionResult`).

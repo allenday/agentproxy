@@ -1,10 +1,8 @@
 ---
 workstation:
   vcs:
-    type: git_worktree
+    type: git_worktree          # auto branch/path derived; no manual prep
     parent: /Users/allenday/src/agentproxy
-    branch: feat/dogfood-docs
-    path: .worktrees/feat-dogfood-docs
   runtime:
     python:
       version: "3.11"
@@ -14,22 +12,23 @@ workstation:
     flags: "--full-auto --sandbox workspace-write"
   telemetry:
     template: otel-compose-local
+  tooling: {}
 task: |
-  Write and wire an "Operator Quickstart + Fast Dogfood" guide so new runs start fast with Codex CLI.
-  Update AGENTS.md (root) and add a short doc under docs/ that:
-    - Shows exact env/flags and the minimal working command (uses codex_cli, sandbox workspace-write, 240s timeout).
-    - Provides a frontmatter snippet (vcs/llm/telemetry) and explains fail-fast errors.
-    - References the 60-second smoke plan (2026-01-31-toy-fib.md) and how to scope pytest to a subset vs full suite.
+  Produce a polished "Operator Quickstart + Fast Dogfood" guide so Codex CLI runs are one-shot and observable.
+  Update AGENTS.md and a short doc under docs/ to include:
+    - Exact env/flags and the minimal working command (codex_cli, workspace-write sandbox, 240s timeout).
+    - A minimal frontmatter snippet (vcs/llm/telemetry) with clear fail-fast messaging.
+    - A 60-second smoke plan reference (2026-01-31-toy-fib.md) and how to scope pytest (quick vs full).
 acceptance:
-  - Only docs are changed (AGENTS.md and new/updated docs files under docs/).
-  - Quickstart includes copy-paste command known to work with codex_cli.
-  - Frontmatter snippet is valid YAML and lists required keys.
-  - Describes how to run quick smoke vs full test battery.
+  - Only docs are changed (AGENTS.md plus one doc under docs/).
+  - Quickstart shows a copy-paste command verified to work with codex_cli.
+  - Frontmatter snippet is valid YAML, minimal, and explains required keys.
+  - Includes pytest scoping guidance (quick subset vs full suite).
 work_orders:
-  - "WO-1: Add/update docs/fast-dogfood.md (or similar) with quickstart steps, env flags, and smoke command. [deps: none]"
-  - "WO-2: Insert a concise Operator Quickstart section into AGENTS.md linking to the doc and the toy smoke plan. [deps: WO-1]"
-  - "WO-3: Include the frontmatter template snippet (vcs/llm/telemetry) and explain fail-fast messages. [deps: WO-1]"
-  - "WO-4: Add guidance for pytest scoping (quick vs full) tied to plans. [deps: WO-1]"
+  - "WO-1: Create/update docs/fast-dogfood.md with quickstart, env flags, and smoke command. [deps: none]"
+  - "WO-2: Add a concise Operator Quickstart section to AGENTS.md linking to the doc and toy smoke plan. [deps: WO-1]"
+  - "WO-3: Include the minimal frontmatter snippet (vcs/llm/telemetry) and describe fail-fast errors. [deps: WO-1]"
+  - "WO-4: Add pytest scoping guidance (quick vs full) tied to plans. [deps: WO-1]"
   - "WO-5: Verify markdown formatting; no code changes outside docs. [deps: WO-1, WO-2, WO-3, WO-4]"
 ---
 
