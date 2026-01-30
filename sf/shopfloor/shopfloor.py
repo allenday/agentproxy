@@ -117,6 +117,7 @@ class ShopFloor:
             meta, body = parse_frontmatter(task)
             validate_frontmatter(meta)
             fm = expand_templates(meta)
+            validate_internal(fm)
             task_body = body
         except FrontmatterError as e:
             yield self._emit(f"[ShopFloor] Frontmatter error: {e}", event_type=EventType.ERROR)

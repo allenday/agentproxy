@@ -111,7 +111,7 @@ def _get(meta: Dict[str, Any], path: str) -> Any:
 
 def validate_frontmatter(meta: Dict[str, Any]) -> None:
     """
-    Ensure required sections and required fields per vcs type.
+    External/user validation: minimal required fields only.
     """
     for key in REQUIRED_SECTIONS:
         if _get(meta, key) is None:
@@ -128,8 +128,39 @@ def validate_frontmatter(meta: Dict[str, Any]) -> None:
             pass
     if vcs_type == "git_clone" and not vcs.get("repo_url"):
         raise FrontmatterError("workstation.vcs.repo_url is required for git_clone")
-
     # runtime/tooling/telemetry/llm are optional; defaults applied in expand_templates
+
+
+def validate_internal(meta: Dict[str, Any]) -> None:
+    """
+    Internal validation after defaults are applied (strict).
+    Ensures all workstation sub-sections are present and usable.
+    """
+    if _get(meta, "workstation") is None:
+        raise FrontmatterError("Missing workstation block after expansion")
+
+    vcs = _get(meta, "workstation.vcs") or {}
+    vcs_type = vcs.get("type")
+    if vcs_type not in {"git_repo", "git_worktree", "git_clone", "local"}:
+        raise FrontmatterError("workstation.vcs.type must be one of git_repo, git_worktree, git_clone, local")
+    if vcs_type == "git_clone" and not vcs.get("repo_url"):
+        raise FrontmatterError("workstation.vcs.repo_url is required for git_clone")
+
+    runtime = _get(meta, "workstation.runtime") or {}
+    if not runtime.get("venv"):
+        raise FrontmatterError("workstation.runtime.venv is required after expansion")
+
+    telemetry = _get(meta, "workstation.telemetry") or {}
+    if "env" not in telemetry:
+        raise FrontmatterError("workstation.telemetry.env is required after expansion")
+
+    llm = _get(meta, "workstation.llm") or {}
+    if not llm.get("provider"):
+        raise FrontmatterError("workstation.llm.provider is required after expansion")
+
+    tooling = _get(meta, "workstation.tooling")
+    if tooling is None:
+        raise FrontmatterError("workstation.tooling must be a mapping after expansion")
 
 
 def expand_templates(meta: Dict[str, Any]) -> Dict[str, Any]:
